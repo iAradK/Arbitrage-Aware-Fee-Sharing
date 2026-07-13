@@ -1,0 +1,42 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / editor files
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Experiment data
+exp_data/
+pyth_eth_usd_download/
+pyth_eth_usd_tradingview_*/
+
+# Results / generated outputs
+results_*/
+synthetic_ivb_participation_tradeoff/
+
+# Large or temporary raw files
+*.json
+*.csv
+*.parquet
+*.pkl
+*.pickle
+
+# Logs
+*.log
+
+# Local notebooks/checkpoints
+.ipynb_checkpoints/
+
+# Optional: old scratch files
+*_old.py

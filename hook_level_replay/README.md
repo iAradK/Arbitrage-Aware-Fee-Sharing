@@ -17,7 +17,7 @@ order of operations is important: `gamma` is applied after subtracting
 For callbacks in the same transaction, the cumulative rule evaluates
 
 ```text
-A_j = max(0, reference_price · cumulative_baseline_delta_j)
+A_j = max(0, reference_price Â· cumulative_baseline_delta_j)
 T_j = F(A_j)
 W_j = max(W_(j-1), T_j)
 r_j = W_j - W_(j-1)
@@ -58,11 +58,13 @@ python -m pip install numpy pandas
 Foundry dependency:
 
 ```bash
-forge install foundry-rs/forge-std --no-commit
+forge install foundry-rs/forge-std --no-git
 ```
 
-The supplied `foundry.toml` selects Solidity 0.8.24 and the Cancun EVM because
-transient-storage opcodes are not available on earlier EVM targets.
+The supplied `foundry.toml` selects Solidity 0.8.24, the Cancun EVM, and the
+IR compilation pipeline. Cancun is required for transient-storage opcodes, and
+`via_ir = true` avoids legacy-code-generator stack limits in the cumulative
+accounting path. Gas measurements must use this same compiler configuration.
 
 ## 2. Prepare historical events
 

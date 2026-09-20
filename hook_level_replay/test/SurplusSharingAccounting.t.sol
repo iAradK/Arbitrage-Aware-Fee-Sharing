@@ -107,13 +107,13 @@ contract SurplusSharingAccountingTest is Test {
         assertLe(transfer, bufferedMargin);
     }
 
-    function test_VectorFile() public {
+    function test_VectorFile() public view {
         string memory path = vm.envOr(
             "VECTORS",
             string("results/test_vectors.json")
         );
         string memory json = vm.readFile(path);
-        uint256 count = abi.decode(vm.parseJson(json, ".count"), (uint256));
+        uint256 count = vm.parseJsonUint(json, ".count");
 
         for (uint256 i; i < count; ++i) {
             string memory root = string.concat(
@@ -157,7 +157,7 @@ contract SurplusSharingAccountingTest is Test {
             string("results/solidity_gas.csv")
         );
         string memory json = vm.readFile(path);
-        uint256 count = abi.decode(vm.parseJson(json, ".count"), (uint256));
+        uint256 count = vm.parseJsonUint(json, ".count");
         vm.writeFile(
             output,
             "event_id,transfer_solidity_wad,gas_used,cap_binds\n"
@@ -169,9 +169,9 @@ contract SurplusSharingAccountingTest is Test {
                 vm.toString(i),
                 "]"
             );
-            string memory eventId = abi.decode(
-                vm.parseJson(json, string.concat(root, ".event_id")),
-                (string)
+            string memory eventId = vm.parseJsonString(
+                json,
+                string.concat(root, ".event_id")
             );
             uint256 surplus = _readUint(json, root, "surplus_hat_wad");
             uint256 margin = _readUint(
@@ -212,11 +212,12 @@ contract SurplusSharingAccountingTest is Test {
         string memory json,
         string memory root,
         string memory field
-    ) internal view returns (uint256) {
-        return abi.decode(
-            vm.parseJson(json, string.concat(root, ".", field)),
-            (uint256)
+    ) internal pure returns (uint256) {
+        string memory decimal = vm.parseJsonString(
+            json,
+            string.concat(root, ".", field)
         );
+        return vm.parseUint(decimal);
     }
 
     function _mulWadDown(

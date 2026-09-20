@@ -39,3 +39,17 @@ synthetic_ivb_participation_tradeoff/
 
 # Optional: old scratch files
 *_old.py
+
+
+# Foundry build and cache
+cache/
+out/
+lib/
+
+# OS/Filesystem artifacts
+.DS_Store
+Thumbs.db
+*zone.identifier
+
+# Temporary or duplicate test artifacts
+test/*:*:*

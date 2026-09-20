@@ -137,13 +137,7 @@ contract CumulativeSurplusAccounting is SurplusSharingAccounting {
         cumulativeSurplus = signedSurplus > 0
             ? uint256(signedSurplus)
             : 0;
-        (cumulativeTarget,) = computeTransfer(
-            cumulativeSurplus,
-            _tload(_slot(poolId, _EXECUTION_MARGIN)),
-            _tload(_slot(poolId, _LAMBDA)),
-            _tload(_slot(poolId, _GAMMA)),
-            _tload(_slot(poolId, _DELTA))
-        );
+        cumulativeTarget = _computeLockedTarget(poolId, cumulativeSurplus);
 
         bytes32 watermarkSlot = _slot(poolId, _WATERMARK);
         uint256 previousWatermark = _tload(watermarkSlot);
@@ -157,6 +151,21 @@ contract CumulativeSurplusAccounting is SurplusSharingAccounting {
             cumulativeSurplus,
             cumulativeTarget,
             marginalCharge
+        );
+    }
+
+    /// @dev Isolating the parameter loads keeps processCallback below the
+    /// legacy code generator's stack limit without requiring via-IR.
+    function _computeLockedTarget(
+        bytes32 poolId,
+        uint256 cumulativeSurplus
+    ) private view returns (uint256 cumulativeTarget) {
+        (cumulativeTarget,) = computeTransfer(
+            cumulativeSurplus,
+            _tload(_slot(poolId, _EXECUTION_MARGIN)),
+            _tload(_slot(poolId, _LAMBDA)),
+            _tload(_slot(poolId, _GAMMA)),
+            _tload(_slot(poolId, _DELTA))
         );
     }
 

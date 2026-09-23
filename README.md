@@ -81,11 +81,6 @@ tests, and running the fragmentation experiment).
 - `results/` — generated output, including `lp_outcomes_v4_auto_r/` (§5.2.2)
   and `fragmentation/` (Table 1).
 
-### `archive/`
-
-Superseded or orphaned data/results kept for provenance rather than deleted —
-see the folder for details on each item.
-
 ## Setup
 
 Python dependencies (used across `experiments/`, `common/`, and `data/`):

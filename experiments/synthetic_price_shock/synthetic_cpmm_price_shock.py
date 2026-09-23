@@ -24,14 +24,14 @@ Mechanisms:
        }
 
 Main outputs:
-    synthetic_ivb_participation_tradeoff/
+    results/
       single_shock_table.csv
       lambda_sweep_summary.csv
       paper_lambda_table.csv
       fig_ivb_participation_tradeoff.png
 
 Run:
-    python synthetic_ivb_participation_tradeoff.py
+    python synthetic_cpmm_price_shock.py
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ class ExperimentConfig:
     # Include 0.60 because this is where suppression often begins in this setup.
     selected_lambdas: tuple[float, ...] = (0.00, 0.25, 0.50, 0.60, 0.75, 0.95)
 
-    output_dir: str = "synthetic_ivb_participation_tradeoff"
+    output_dir: str = "results"
 
 
 # -----------------------------------------------------------------------------

@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-input_file = Path("15_days_univ4_swaps.json")
-output_file = Path("all_swaps.json")
+input_file = Path("../data/jan_univ4_swaps.json")
+output_file = Path("../data/all_swaps.json")
 
 text = input_file.read_text(encoding="utf-8")
 

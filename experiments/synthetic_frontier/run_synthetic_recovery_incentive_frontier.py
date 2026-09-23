@@ -106,7 +106,7 @@ def parse_args() -> argparse.Namespace:
     # Output
     parser.add_argument(
         "--output-dir",
-        default="results_synthetic_frontier",
+        default="results",
         help="Directory for CSVs and figures",
     )
 

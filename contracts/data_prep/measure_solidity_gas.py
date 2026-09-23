@@ -63,19 +63,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--contract",
         type=Path,
-        default=Path("src/SurplusSharingAccounting.sol"),
+        default=Path("../src/SurplusSharingAccounting.sol"),
         help="Path to SurplusSharingAccounting.sol",
     )
     parser.add_argument(
         "--vectors",
         type=Path,
-        default=Path("results/hook_replay/test_vectors.json"),
+        default=Path("../results/test_vectors.json"),
         help="Path to test_vectors.json",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("results/hook_replay/solidity_gas.csv"),
+        default=Path("../results/solidity_gas.csv"),
         help="Output CSV path",
     )
     parser.add_argument(

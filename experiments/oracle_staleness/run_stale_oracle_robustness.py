@@ -11,9 +11,10 @@ import matplotlib.pyplot as plt
 # ============================================================
 
 ROOT = Path(__file__).resolve().parent
+DATA_ROOT = ROOT.parent.parent / "data"
 
 EXTERNAL_PRICE_CSV = (
-    ROOT
+    DATA_ROOT
     / "pyth_eth_usd_tradingview_2026_01_01_to_2026_04_01_1min"
     / "external_price_data"
     / "eth_usd_pyth_oracle_vs_binance_actual_2026_01_to_04.csv"
@@ -22,11 +23,11 @@ EXTERNAL_PRICE_CSV = (
 # Add one or more pool JSON files here.
 # The uploaded file appears to be Uniswap-style poolDayDatas JSON.
 POOL_JSONS = [
-    ROOT / "exp_data" / "pool_data_2026_01_to_04" / "0x4e68ccd3e89f51c3074ca5072bbac773960dfa36.json",
-    ROOT / "exp_data" / "pool_data_2026_01_to_04" / "0x11b815efb8f581194ae79006d24e0d814b7697f6.json",
+    DATA_ROOT / "exp_data" / "pool_data_2026_01_to_04" / "0x4e68ccd3e89f51c3074ca5072bbac773960dfa36.json",
+    DATA_ROOT / "exp_data" / "pool_data_2026_01_to_04" / "0x11b815efb8f581194ae79006d24e0d814b7697f6.json",
 ]
 
-OUT_DIR = ROOT / "results_stale_oracle_robustness_poolday"
+OUT_DIR = ROOT / "results"
 OUT_DIR.mkdir(exist_ok=True)
 
 EVENTS_CSV = OUT_DIR / "stale_oracle_poolday_events.csv"

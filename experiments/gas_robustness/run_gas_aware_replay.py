@@ -31,11 +31,14 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "common"))
 
 from cpmm_replay_common import (
     assign_tvl,
@@ -90,7 +93,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--data-dir",
-        default="exp_data",
+        default="../../data/exp_data",
         help="Directory containing price and gas input data",
     )
     parser.add_argument(
@@ -159,7 +162,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        default="results_gas_robustness",
+        default="results",
         help="Directory for CSVs and figures",
     )
 

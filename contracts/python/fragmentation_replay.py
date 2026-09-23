@@ -452,7 +452,7 @@ def optimal_counts(events: pd.DataFrame) -> pd.DataFrame:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--events", required=True)
-    parser.add_argument("--output-dir", default="results_fragmentation")
+    parser.add_argument("--output-dir", default="results/fragmentation")
     parser.add_argument(
         "--lambda-values",
         type=parse_floats,

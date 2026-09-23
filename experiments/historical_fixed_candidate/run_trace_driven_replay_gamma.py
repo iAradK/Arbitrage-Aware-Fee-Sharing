@@ -35,12 +35,15 @@ Example:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Iterable
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "common"))
 
 from cpmm_replay_common import (
     arbitrage_surplus_y_units,
@@ -69,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     # Input files
     parser.add_argument(
         "--data-dir",
-        default="exp_data",
+        default="../../data/exp_data",
         help="Directory containing input data",
     )
     parser.add_argument(
@@ -152,7 +155,7 @@ def parse_args() -> argparse.Namespace:
     # Output
     parser.add_argument(
         "--output-dir",
-        default="results_trace_replay_gamma",
+        default="results",
         help="Directory for CSVs and figures",
     )
 

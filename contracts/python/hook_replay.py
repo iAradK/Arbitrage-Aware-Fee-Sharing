@@ -248,6 +248,7 @@ def build_vectors(
 def summarize(
     events: pd.DataFrame,
     gas_units_fallback: float | None = None,
+    lifecycle_gas_units: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     detailed = events.copy()
     if "gas_used" not in detailed:
@@ -264,10 +265,20 @@ def summarize(
         pd.to_numeric(detailed["gas_used"]) * gas_price * 1e-9 * eth_usd
     )
 
-    variants = (("ignoring_hook_overhead", False), ("including_hook_overhead", True))
-    for variant, add_hook in variants:
+    variants: list[tuple[str, str | None]] = [
+        ("ignoring_hook_overhead", None),
+        ("including_hook_overhead", "hook_cost_usd"),
+    ]
+    if lifecycle_gas_units is not None:
+        detailed["full_lifecycle_hook_cost_usd"] = (
+            lifecycle_gas_units * gas_price * 1e-9 * eth_usd
+        )
+        variants.append(
+            ("including_full_lifecycle_hook_overhead", "full_lifecycle_hook_cost_usd")
+        )
+    for variant, cost_column in variants:
         margin = detailed["execution_margin_hat_usd"] + (
-            detailed["hook_cost_usd"] if add_hook else 0.0
+            detailed[cost_column] if cost_column is not None else 0.0
         )
         detailed[f"transfer_{variant}_usd"] = transfer_float(
             detailed["surplus_hat_usd"],
@@ -294,7 +305,18 @@ def summarize(
     summary_rows: list[dict[str, object]] = []
     for lam, group in detailed.groupby("lambda"):
         total_loss = group["lp_loss_usd"].sum()
-        for variant, _ in variants:
+        for variant, cost_column in variants:
+            gas_column = "gas_used" if cost_column != "full_lifecycle_hook_cost_usd" else None
+            gas_series = (
+                group[gas_column]
+                if gas_column is not None
+                else pd.Series(lifecycle_gas_units, index=group.index)
+            )
+            cost_series = (
+                group[cost_column]
+                if cost_column is not None
+                else pd.Series(0.0, index=group.index)
+            )
             summary_rows.append(
                 {
                     "lambda": lam,
@@ -315,13 +337,13 @@ def summarize(
                         group[f"transfer_{variant}_usd"] > 0.0
                     ).mean(),
                     "cap_bind_rate": group["cap_binds_python"].mean(),
-                    "median_hook_gas": group["gas_used"].median(),
-                    "p95_hook_gas": group["gas_used"].quantile(0.95),
-                    "max_hook_gas": group["gas_used"].max(),
-                    "mean_hook_cost_usd": group["hook_cost_usd"].mean(),
+                    "median_hook_gas": gas_series.median(),
+                    "p95_hook_gas": gas_series.quantile(0.95),
+                    "max_hook_gas": gas_series.max(),
+                    "mean_hook_cost_usd": cost_series.mean(),
                     "mean_hook_cost_fraction_surplus": np.mean(
                         np.divide(
-                            group["hook_cost_usd"],
+                            cost_series,
                             group["surplus_hat_usd"],
                             out=np.zeros(len(group)),
                             where=group["surplus_hat_usd"] > 0.0,
@@ -345,6 +367,18 @@ def main() -> None:
     parser.add_argument("--delta-usd", type=float, default=0.0)
     parser.add_argument("--solidity-gas-csv")
     parser.add_argument("--fallback-gas-units", type=float)
+    parser.add_argument(
+        "--hook-lifecycle-gas-csv",
+        help=(
+            "Path to HookGasBenchmark.t.sol's hook_lifecycle_gas.csv. When "
+            "given, adds an including_full_lifecycle_hook_overhead variant "
+            "using the maximum gas_used_with_hook observed across valid-"
+            "oracle scenarios in that grid as a conservative constant "
+            "G_hook (the grid is a fixed scenario sweep, not per-event, so "
+            "individual replay events cannot be mapped to a specific "
+            "fragment/tick-crossing/oracle-state bucket)."
+        ),
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -383,7 +417,21 @@ def main() -> None:
         if events["transfer_deviation_wad"].max() != 0:
             raise AssertionError("Python/Solidity transfer mismatch")
 
-    detailed, summary = summarize(events, args.fallback_gas_units)
+    lifecycle_gas_units = None
+    if args.hook_lifecycle_gas_csv:
+        lifecycle = pd.read_csv(args.hook_lifecycle_gas_csv)
+        valid_rows = lifecycle[
+            (lifecycle["oracle_mode"] == "valid") & (~lifecycle["reverted"])
+        ]
+        if valid_rows.empty:
+            raise ValueError(
+                "hook-lifecycle-gas-csv has no valid, non-reverted rows"
+            )
+        lifecycle_gas_units = float(valid_rows["gas_used_with_hook"].max())
+
+    detailed, summary = summarize(
+        events, args.fallback_gas_units, lifecycle_gas_units
+    )
     detailed.to_csv(output_dir / "hook_replay_events.csv", index=False)
     summary.to_csv(output_dir / "hook_replay_summary.csv", index=False)
     print(summary.to_string(index=False))

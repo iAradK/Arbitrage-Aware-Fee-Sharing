@@ -16,7 +16,7 @@ script in this repository:
 | §5.2.1 / Fig 3 | Historical fixed-candidate replay, daily ETH/USD Apr 2021–2026, λ sweep, 3 rules | `experiments/historical_fixed_candidate/run_trace_driven_replay_gamma.py` |
 | §5.2.2 / Fig 4 | Trace-calibrated LP outcomes, >100k real Uniswap v4 swaps Jan–Mar 2026 | `contracts/data_prep/run_lp_outcome_daily.py` |
 | §5.3 / Fig 5 | Oracle-staleness robustness, Pyth vs Binance, 1–60 min delays | `experiments/oracle_staleness/run_stale_oracle_robustness.py` |
-| §5.4 / Table 1 | Solidity↔Python parity (128 cases), gas benchmarks, fragmentation resistance | `contracts/src/*.sol`, `contracts/python/*.py` |
+| §5.4 / Table 1 | Solidity↔Python parity (128 cases), gas benchmarks, fragmentation resistance, real Uniswap v4-core hook fuzz testing and full-lifecycle hook gas cost (`G_hook`) | `contracts/src/*.sol`, `contracts/src/hooks/*.sol`, `contracts/python/*.py`, `contracts/test/hooks/ParticipationAwareHook.t.sol`, `contracts/test/hooks/HookGasBenchmark.t.sol` |
 
 ## Repository structure
 
@@ -68,12 +68,22 @@ for the mechanism description and full usage instructions (installing
 dependencies, generating replay vectors, running the Solidity conformance
 tests, and running the fragmentation experiment).
 
-- `src/` — `SurplusSharingAccounting.sol` (stateless implementation of `F`) and
-  `CumulativeSurplusAccounting.sol` (Cancun-EVM prototype using TSTORE/TLOAD
-  for the transaction-scoped watermark rule, §3.5).
-- `test/` — Foundry test suites for both contracts.
-- `python/` — `hook_replay.py` (generates atomic replay vectors) and
-  `fragmentation_replay.py` (the fragmentation-resistance experiment, Table 1).
+- `src/` — `SurplusSharingAccounting.sol` (stateless implementation of `F`),
+  `CumulativeSurplusAccounting.sol`/`CumulativeSurplusAccountingLib.sol`
+  (Cancun-EVM prototype using TSTORE/TLOAD for the transaction-scoped
+  watermark rule, §3.5), and `hooks/ParticipationAwareHook.sol` (the same
+  accounting wired into real Uniswap v4-core `beforeSwap`/`afterSwap`
+  callbacks against a genuine `PoolManager`, mock oracle included).
+- `test/` — Foundry test suites for both accounting contracts, plus
+  `test/hooks/ParticipationAwareHook.t.sol` (boundary/tick-crossing/invalid-
+  oracle-state fuzz tests against the real v4 hook) and
+  `test/hooks/HookGasBenchmark.t.sol` (full-lifecycle hook gas cost `G_hook`,
+  including oracle access, transient-storage tracking, and callback routing —
+  not just the arithmetic core).
+- `python/` — `hook_replay.py` (generates atomic replay vectors, optionally
+  folding `G_hook` into the participation margin via `--hook-lifecycle-gas-csv`)
+  and `fragmentation_replay.py` (the fragmentation-resistance experiment,
+  Table 1).
 - `data_prep/` — acquisition/prep scripts for the Uniswap v4 swap data used in
   §5.2.2, including `run_lp_outcome_daily.py`, the primary script for that figure.
 - `data/` — loose input files for the contracts subproject (v4 swaps, gas and

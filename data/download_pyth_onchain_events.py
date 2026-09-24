@@ -99,9 +99,12 @@ def rpc_batch(url, calls):
     j = _post(url, payload)
     if isinstance(j, dict):  # provider rejected the batch as a whole
         raise RpcError(str(j.get("error", j)))
+    if not isinstance(j, list) or any(not isinstance(x, dict) or "id" not in x for x in j):
+        raise RpcError("malformed batch response: " + str(j)[:200])
     j = sorted(j, key=lambda x: x["id"])
-    if any("error" in x for x in j):
-        raise RpcError(str(next(x["error"] for x in j if "error" in x)))
+    if len(j) != len(calls) or any("error" in x for x in j):
+        errs = [x["error"] for x in j if "error" in x]
+        raise RpcError(f"batch error: {str(errs[:1])[:200]} ({len(j)}/{len(calls)} answers)")
     return [x["result"] for x in j]
 
 
@@ -194,8 +197,12 @@ def fetch_block_times(url, blocks, workers, batch=100):
     groups = [blocks[i:i + batch] for i in range(0, len(blocks), batch)]
 
     def one(group):
-        res = rpc_batch(url, [("eth_getBlockByNumber", [hex(b), False]) for b in group])
-        return {b: int(r["timestamp"], 16) for b, r in zip(group, res)}
+        try:
+            res = rpc_batch(url, [("eth_getBlockByNumber", [hex(b), False]) for b in group])
+            return {b: int(r["timestamp"], 16) for b, r in zip(group, res)}
+        except (RpcError, KeyError, TypeError) as e:
+            print(f"    batch failed ({str(e)[:110]}); using single calls for {len(group)} blocks")
+            return {b: block_ts(url, b) for b in group}
 
     out = {}
     with ThreadPoolExecutor(workers) as ex:

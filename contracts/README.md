@@ -170,7 +170,7 @@ forge test --match-test test_GasBenchmarkCumulative -vv
 ```bash
 python python/fragmentation_replay.py \
   --events your_v4_events.csv \
-  --output-dir results_fragmentation \
+  --output-dir results/fragmentation \
   --lambda-values 0.95 \
   --gamma 0.05 \
   --delta-usd 5 \
@@ -188,9 +188,9 @@ optimized adversarial partitions under:
 
 Fragmentation outputs:
 
-- `results_fragmentation/fragmentation_events.csv`
-- `results_fragmentation/fragmentation_summary.csv`
-- `results_fragmentation/fragmentation_optima.csv`
+- `results/fragmentation/fragmentation_events.csv`
+- `results/fragmentation/fragmentation_summary.csv`
+- `results/fragmentation/fragmentation_optima.csv`
 
 By default, the adversarial optimizer permits zero-sized limiting fragments.
 This reports the infimum of the old rule. Use `--minimum-fragment-usd` to impose

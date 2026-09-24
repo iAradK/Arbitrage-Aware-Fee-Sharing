@@ -52,11 +52,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # PyCharm Run-button constants.
 # Edit these values directly; no command-line parameters are required.
 # ---------------------------------------------------------------------------
-POOL_CSV = "v4_pool_daily_cpmm.csv"
-PRICE_CSV = "v4_nextday_price.csv"
-GAS_CSV = "ether_gas_4y.csv"
-SWAP_JSON = "all_swaps.json"
-OUT_DIR = "results_lp_outcomes_v4_auto_r"
+POOL_CSV = "../data/v4_pool_daily_cpmm.csv"
+PRICE_CSV = "../data/v4_nextday_price.csv"
+GAS_CSV = "../data/ether_gas_4y.csv"
+SWAP_JSON = "../data/all_swaps.json"
+OUT_DIR = "../results/lp_outcomes_v4_auto_r"
 
 LAMBDA_VALUES = [0.75, 0.95]
 GAMMA = 0.05

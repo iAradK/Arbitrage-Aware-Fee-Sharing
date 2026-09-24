@@ -21,8 +21,7 @@ pyth_eth_usd_download/
 pyth_eth_usd_tradingview_*/
 
 # Results / generated outputs
-results_*/
-synthetic_ivb_participation_tradeoff/
+results/
 
 # Large or temporary raw files
 *.json

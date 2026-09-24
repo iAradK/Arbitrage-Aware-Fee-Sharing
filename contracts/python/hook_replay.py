@@ -335,7 +335,7 @@ def summarize(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--events", required=True)
-    parser.add_argument("--output-dir", default="results_hook_replay")
+    parser.add_argument("--output-dir", default="results")
     parser.add_argument(
         "--lambda-values",
         type=parse_floats,

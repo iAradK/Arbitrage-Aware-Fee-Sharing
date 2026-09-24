@@ -8,7 +8,7 @@ import pandas as pd
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--json-file', required=True)
-    ap.add_argument('--out-dir', default='.')
+    ap.add_argument('--out-dir', default='../data')
     ap.add_argument('--fixed-depth-y', type=float, default=1_000_000.0)
     ap.add_argument('--price-field', default='token0Price')
     args = ap.parse_args()

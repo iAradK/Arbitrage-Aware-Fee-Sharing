@@ -1,5 +1,7 @@
 """Parallel, resumable downloader for Uniswap v4 (Ethereum mainnet) swaps.
 
+*** note: you must add your api key to your API_KEY var ***
+
 How it works:
 - The date range for each pool is split into chunks (CHUNK_DAYS each).
 - Chunks are downloaded in parallel threads (MAX_WORKERS at a time).
@@ -19,7 +21,7 @@ from datetime import datetime, timezone
 
 import requests
 
-API_KEY = "7b29fe242115ee00cd5e439f1a12418d"
+API_KEY = "ADD_YOUR_API_KEY_HERE"
 SUBGRAPH_ID = "DiYPVdygkfjDWhbxGSqAQxwBKmfKnkWQojqeM2rkLb3G"  # Uniswap v4, Ethereum mainnet
 ENDPOINT = f"https://gateway.thegraph.com/api/{API_KEY}/subgraphs/id/{SUBGRAPH_ID}"
 

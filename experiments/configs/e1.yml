@@ -1,0 +1,9 @@
+experiment: e1
+seed: 20260924
+pools: [eth_usdc_005, usdc_usdt_0001, eth_wbtc_030, eth_wsteth_001]
+# depth is inferred from price impact (the subgraph has no liquidity column)
+min_rel_move: 1.0e-8          # ignore swaps whose sqrtP moves by less than this (float precision floor)
+consistency_tol: 0.02         # |L_in / L_out - 1| <= tol marks a single-range, chain-consistent swap
+window_hours_grid: [1, 3, 6, 12, 24, 72, 168]   # trailing windows (hours); the one used is chosen on the validation months
+min_swaps_in_window: 5
+size_quartiles_from: train    # quartile edges of amountUSD fixed on train swaps

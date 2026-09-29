@@ -22,3 +22,12 @@ headline: {lambda: 0.75, gamma: 0.02}
 eps_mode: rolling            # rolling: trailing-window eps_S from strictly earlier baseline candidates (window chosen in E4); fixed: v1
 eps_window_days: 7           # chosen on the validation months in E4 (results/e4/tables/e4_window_selection_valid)
 cadences_min: [1, 5, 15]     # searcher cadence runs: --cadence k (median regime only, --median-only)
+# --- v3 (DECISIONS W2): baseline without the hook overhead, and the rule that decides whether that overhead matters.
+# Fixed before the test months are run; analysed by experiments/e2_hook_gas.py.
+nohook_baseline: true        # adds `baseline_nohook`, which pays gas_units only. R is unchanged (already calibrated at gas_units).
+hook_gas_rule:
+  gas_quantile: 0.90         # top gas-price decile: g_t >= P90 of g_t over all minutes of the split (chain-wide, one cutoff for all pools)
+  material_share: 0.01       # material if, in some pool, X = |F150 and not F180| / |F150| >= 1% on the no-hook replay path (per pool, never pooled)
+  material_etw_ratio: 1.01   # or if the CI of mean E_TW(baseline) / mean E_TW(baseline_nohook) lies entirely above 1.01
+  ci: 0.95                   # paired day-block bootstrap, same B and seed as e2_bootstrap.py
+  bootstrap_B: 2000

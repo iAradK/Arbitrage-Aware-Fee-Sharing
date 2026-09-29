@@ -1,0 +1,40 @@
+experiment: e5
+seed: 20260924
+pools: [eth_usdc_005, usdc_usdt_0001, eth_wbtc_030, eth_wsteth_001]
+# E5 uses TRAIN months only (states, shocks, reservation regime): it never touches valid or test data.
+n_scenarios: 1500
+shock_horizons_min:            # reference log-returns over these horizons are sampled from train (per pool)
+  eth_usdc_005: [1, 5, 15, 60]
+  usdc_usdt_0001: [15, 60, 240, 1440]
+  eth_wbtc_030: [5, 15, 60, 240]
+  eth_wsteth_001: [1440]       # the Lido reference only steps once a day
+# shock source per pool: ref_returns (train reference log-returns over the horizons above) or pre_dev (real train pre-swap
+# deviations of the pool from its reference; used where the reference itself barely moves, i.e. the daily-step Lido rate)
+shock_source:
+  eth_usdc_005: ref_returns
+  usdc_usdt_0001: ref_returns
+  eth_wbtc_030: ref_returns
+  eth_wsteth_001: pre_dev
+variant: raw
+r_regime: median
+r_quantiles: [0.25, 0.5, 0.75]
+grid_points: 200
+lambdas: [0.25, 0.5, 0.75, 0.95]
+min_abs_shock_fee_multiple: 1.5   # shocks are drawn from train reference returns conditional on |shock| >= this * pool fee (an opportunity exists)
+max_abs_pre_dev: 0.05             # v2: pre_dev shocks above 5% (out-of-range swaps in the thin wstETH pool) are excluded
+gammas: [0.0, 0.005, 0.02, 0.05, 0.10]
+# C(q) = c0 + c1*N + c2*N^2 with N the trade notional in USD. c0 = gas_units*gas price*ETH price. c1 and c2 are ASSUMED
+# sensitivity ranges (no external order-book data), not fitted: c1 = external_fee_bps * 1e-4, and c2 is set so that the
+# marginal size-dependent cost at the median train notional equals curvature_multiple * c1  (c2 = m*c1 / (2*N_med)).
+gas_units: [100000, 150000, 200000, 300000]
+hook_overhead_gas: 30032       # v2: measured in E7, cold single-transaction first call (results/e7/gas_profile.json first_call_gas)
+# per pool. The brief's {1, 5, 10} bps is kept for ETH/USDC and ETH/WBTC. For the two 1 bp-fee pools an external cost of 1 bp or more per
+# unit notional already exceeds the whole fee band (no arbitrage is baseline-feasible), so those pools use a grid of 0.05-0.25 bp.
+external_fee_bps:
+  eth_usdc_005: [1, 5, 10]
+  usdc_usdt_0001: [0.05, 0.1, 0.25]
+  eth_wbtc_030: [1, 5, 10]
+  eth_wsteth_001: [0.05, 0.1, 0.25]
+curvature_multiple: [0.0, 0.5, 1.0]
+# hook cost estimate: gas_only = K_hat = c0 + R (size-dependent part unseen); exact = K_hat = C(q) + R pointwise
+k_hat_modes: [gas_only, gas_only_buf, exact]   # v2: gas_only_buf = gas_only plus the buffer delta = eps_K (fix 3)

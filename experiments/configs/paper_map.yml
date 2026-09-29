@@ -1,0 +1,12 @@
+# Maps experiment IDs to paper section labels. Section numbers will change; refer to experiments by ID.
+# current_pdf: labels in Arbitrage_Aware_Fee_Sharing_for_Automated_Market_Makers.pdf (Sept 2026 draft)
+# planned: labels used in the audit/brief tables (inconsistent between documents, kept for traceability)
+E1: {title: CPMM calibration and validation,      rq: RQ1, current_pdf: "5.2.1 (setup, fixed-candidate calibration)", planned: "5.1.4"}
+E2: {title: Sequential endogenous replay,         rq: RQ1, current_pdf: "5.2.1 / 5.1 (controlled)",                planned: "5.1.3 / 5.2.1"}
+E3: {title: Economic outcomes and Pareto frontier, rq: RQ2, current_pdf: "5.2.2",                                     planned: "5.2.2"}
+E4: {title: Oracle delay and required-payoff error, rq: RQ3, current_pdf: "5.3",                                       planned: "5.3"}
+E5: {title: Size-dependent costs,                 rq: RQ4, current_pdf: "5.1 (extension)",                            planned: "5.4.1"}
+E6: {title: Fragmentation and reversal,           rq: RQ4, current_pdf: "5.4 (Table 1)",                              planned: "5.4.2"}
+E7: {title: Solidity conformance, gas, S_min,     rq: RQ5, current_pdf: "5.4",                                        planned: "5.5"}
+legacy:
+  controlled_experiment: experiments/synthetic_frontier/run_synthetic_recovery_incentive_frontier.py   # old 5.1, run by --legacy

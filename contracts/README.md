@@ -68,7 +68,10 @@ storage, since the library namespaces slots by `address(this)`).
 `ParticipationAwareHook.sol` wires that same accounting into real
 `beforeSwap`/`afterSwap` callbacks against a genuine Uniswap v4-core
 `PoolManager`, so its gas cost includes oracle access, transient-storage
-tracking, and callback routing rather than only the arithmetic core.
+tracking, callback routing, and settlement rather than only the arithmetic
+core. Each marginal charge is converted into the swap's unspecified currency
+at the locked reference price (rounded down), returned as the `afterSwap`
+return delta, and minted as ERC-6909 claims to the LP-protection vault.
 
 ## 1. Install dependencies
 
@@ -285,9 +288,13 @@ The suite covers: the `zeroForOne`-derived direction mapping; boundary
 values of `K_hat`, `delta`, `lambda`, `gamma`, and swap size (from dust to
 near-`uint128` scale); constructor rejection of invalid `lambda`/`gamma`;
 monotone charge behavior across single-tick and multi-tick-crossing swap
-sequences; fail-open behavior under every invalid oracle mode (the swap
-never reverts, `marginalCharge` stays zero, and `OracleRejected` fires with
-the matching reason); and isolation between two pools sharing one hook
+sequences; fail-open behavior under every invalid oracle mode, including an
+oracle that reverts (the swap never reverts, `marginalCharge` stays zero, and
+`OracleRejected` fires with the matching reason); settlement for exact-input
+(charge taken from the output token) and exact-output (charge added to the
+input token) swaps, with the vault's claims matching the swapper's delta
+adjustment and fragmented sequences never collecting more than the
+watermark; and isolation between two pools sharing one hook
 instance, driven through real swaps rather than direct library calls.
 
 ## 8. Full-lifecycle hook gas benchmark
@@ -349,12 +356,16 @@ simulated), but is still not a deployable hook. In particular:
   `sqrtPriceX96` (a deliberate simplification chosen to avoid a 512-bit
   price-squaring step on every swap — see the NatSpec in
   `ParticipationAwareHook.sol`);
-- deltas and prices are already normalized to WAD common-numeraire units;
-- the watermark is maintained in that common numeraire;
-- settlement-token conversion and conversion remainders are not implemented;
-- **settlement — actually transferring `marginalCharge` to LPs — is out of
-  scope**; the hook only measures and records the charge that a production
-  integration would still need to collect and route through a vault; and
+- deltas are raw token base units and token0 is the numeraire (the oracle
+  price is token1's value in token0 base units), so the watermark, `K_hat`,
+  and `delta` are all in token0 base units;
+- the charge is settled by minting ERC-6909 claims to a fixed vault address;
+  the rounding remainder of the token conversion stays in the watermark and
+  is collected by the next fragment; how the vault distributes claims to LPs
+  is out of scope;
+- under the cumulative watermark, a small fragment that pushes the cumulative
+  surplus past `K_hat + delta` pays the whole marginal charge, which in an
+  exact-input swap can exceed that fragment's own output; and
 - the public harness methods should become internal hook-controlled operations
   in a deployable implementation.
 

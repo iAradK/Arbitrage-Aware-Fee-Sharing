@@ -154,17 +154,19 @@ FIELDS = ["block_number", "base_fee_wei", "gas_used_ratio", "tip_p10_wei",
           "base_fee_gwei", "tip_p50_gwei", "gas_price_p50_gwei"]
 
 
-def last_block_in_file(path):
+def edge_blocks_in_file(path):
+    """(first_block, last_block) already in the CSV, or (None, None) if empty/new."""
     if not path.exists() or path.stat().st_size == 0:
-        return None
+        return None, None
     with open(path, "rb") as f:
+        head = f.read(4096).decode(errors="ignore").splitlines()
         f.seek(0, 2)
         f.seek(max(0, f.tell() - 4096))
-        lines = f.read().decode().strip().splitlines()
+        tail = f.read().decode(errors="ignore").strip().splitlines()
     try:
-        return int(lines[-1].split(",")[0])
+        return int(head[1].split(",")[0]), int(tail[-1].split(",")[0])
     except (ValueError, IndexError):
-        return None
+        return None, None
 
 
 def main():
@@ -194,10 +196,18 @@ def main():
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    done = last_block_in_file(out)
-    if done is not None and done >= b0:
-        print(f"Resuming after block {done:,}")
-        b0 = done + 1
+    first_in_file, done = edge_blocks_in_file(out)
+    if first_in_file is not None:
+        if first_in_file > b0:
+            raise SystemExit(
+                f"{out} already holds blocks {first_in_file:,} -> {done:,}, but you asked for a range "
+                f"starting at {b0:,}.\nResuming would silently skip {first_in_file - b0:,} blocks. "
+                f"Either delete/rename that file, or fetch the missing head into a new file:\n"
+                f"  python download_fee_history.py --start-block {b0} --end-block {first_in_file - 1} "
+                f"--out <new_file.csv>\nand then merge the two files.")
+        if done >= b0:
+            print(f"Resuming after block {done:,}")
+            b0 = done + 1
     if b0 > b1:
         print("Nothing to do.")
         return

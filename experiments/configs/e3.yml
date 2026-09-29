@@ -1,0 +1,4 @@
+experiment: e3
+# E3 has no data of its own: it aggregates results/e2/e2_summary_<tag>.parquet.
+regime: median
+gamma_shown: 0.02

@@ -96,6 +96,10 @@ library CumulativeSurplusAccountingLib {
         return tload(slot(poolId, WATERMARK));
     }
 
+    function referencePrice(bytes32 poolId, bool token0) internal view returns (uint256) {
+        return tload(slot(poolId, token0 ? REFERENCE_PRICE_0 : REFERENCE_PRICE_1));
+    }
+
     function disable(bytes32 poolId) internal {
         tstore(slot(poolId, STATUS), STATUS_DISABLED);
     }

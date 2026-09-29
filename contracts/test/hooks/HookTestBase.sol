@@ -24,7 +24,7 @@ abstract contract HookTestBase is Deployers {
     using StateLibrary for IPoolManager;
 
     uint160 internal constant HOOK_FLAGS =
-        uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG);
+        uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG);
 
     MockOracle internal oracle;
     ParticipationAwareHook internal hook;
@@ -34,6 +34,7 @@ abstract contract HookTestBase is Deployers {
     PoolKey internal poolB;
     PoolId internal poolBId;
 
+    address internal constant VAULT = address(0x7A017);
     uint256 internal constant EXECUTION_MARGIN_HAT_WAD = 1e18;
     uint256 internal constant LAMBDA_WAD = 0.75e18;
     uint256 internal constant GAMMA_WAD = 0.05e18;
@@ -49,6 +50,7 @@ abstract contract HookTestBase is Deployers {
         bytes memory constructorArgs = abi.encode(
             manager,
             oracle,
+            VAULT,
             EXECUTION_MARGIN_HAT_WAD,
             LAMBDA_WAD,
             GAMMA_WAD,
@@ -59,7 +61,7 @@ abstract contract HookTestBase is Deployers {
             address(this), HOOK_FLAGS, type(ParticipationAwareHook).creationCode, constructorArgs
         );
         hook = new ParticipationAwareHook{salt: salt}(
-            manager, oracle, EXECUTION_MARGIN_HAT_WAD, LAMBDA_WAD, GAMMA_WAD, DELTA_WAD, STALENESS_THRESHOLD_SECONDS
+            manager, oracle, VAULT, EXECUTION_MARGIN_HAT_WAD, LAMBDA_WAD, GAMMA_WAD, DELTA_WAD, STALENESS_THRESHOLD_SECONDS
         );
         require(address(hook) == minedAddress, "HookTestBase: hook address mismatch");
 

@@ -1,0 +1,24 @@
+experiment: e2
+seed: 20260924
+pools: [eth_usdc_005, usdc_usdt_0001, eth_wbtc_030, eth_wsteth_001]
+# basis variants per pool: raw reference, and the lookahead-free trailing offset (24h primary, 6h/7d sensitivity)
+variants:
+  eth_usdc_005: [raw]
+  usdc_usdt_0001: [raw]
+  eth_wbtc_030: [raw, corr24h, corr6h, corr7d]
+  eth_wsteth_001: [raw, corr24h, corr6h, corr7d]
+gas_units: 150000            # arbitrage tx gas (assumption; E5 sweeps it, E7 measures the hook overhead)
+hook_overhead_gas: 30032     # v2: measured in E7, cold single-transaction first call (results/e7/gas_profile.json first_call_gas)
+hook_lag_min: 0              # hook reference = benchmark series lagged by this many minutes; 0 = ideal oracle (DECISIONS D9). Run --lag 1 / --lag 5 for the buffered comparison
+r_quantiles: [0.25, 0.5, 0.75]     # low / median / high reservation payoff, train swaps (DECISIONS D6)
+eps_quantile: 0.95
+eps_calibration_split: valid       # eps_S(d) is always fitted on the validation months
+grid_points: 200                   # candidate corrections per step, as fractions of the full correction
+lambdas: [0.25, 0.5, 0.75, 0.95]
+gammas: [0.005, 0.02, 0.05, 0.10]  # gamma > 0 grid for retained-margin and buffered rules; the maximal cap is gamma = 0
+static_fee_rates: [0.0005, 0.003]
+headline: {lambda: 0.75, gamma: 0.02}
+# --- v2 (DECISIONS V5, V6, V8)
+eps_mode: rolling            # rolling: trailing-window eps_S from strictly earlier baseline candidates (window chosen in E4); fixed: v1
+eps_window_days: 7           # chosen on the validation months in E4 (results/e4/tables/e4_window_selection_valid)
+cadences_min: [1, 5, 15]     # searcher cadence runs: --cadence k (median regime only, --median-only)

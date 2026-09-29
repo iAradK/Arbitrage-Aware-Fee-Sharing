@@ -1,0 +1,27 @@
+experiment: e4
+seed: 20260924
+pools: [eth_usdc_005, usdc_usdt_0001, eth_wbtc_030, eth_wsteth_001]
+variants:
+  eth_usdc_005: [raw]
+  usdc_usdt_0001: [raw]
+  eth_wbtc_030: [raw, corr24h]
+  eth_wsteth_001: [raw, corr24h]
+delays_min: [0, 1, 5, 10, 30, 60]
+etas: [-0.5, -0.25, 0.0, 0.25, 0.5]     # K_hat = (1 + eta) K   (DECISIONS D4)
+lam: 0.75
+gamma: 0.05                              # the old oracle-delay experiment used lambda = 0.75, gamma = 0.05
+gas_units: 150000              # arbitrage tx gas excluding the hook
+hook_overhead_gas: 30032       # v2: measured in E7, cold single-transaction first call (results/e7/gas_profile.json first_call_gas)
+r_regime: median                         # median reservation payoff from train swaps (DECISIONS D6)
+r_quantiles: [0.25, 0.5, 0.75]
+eps_quantile: 0.95
+grid_points: 200
+pyth:
+  enabled: true                          # real on-chain Pyth realism check, ETH/USDC pool only, events end 2026-08-17
+  # DECISIONS W1: July only. Events thin out from late July (4-48 per week in August, gaps of 2-3 days, likely an
+  # incomplete download), so candidates from 2026-08-01 on are dropped rather than given a days-old price
+  last_event_cutoff: "2026-08-01 00:00:00+00:00"
+# --- v2 (DECISIONS V5, V6)
+cadences_min: [1, 5, 15]                 # the searcher acts every k minutes; k = 1 is the v1 design
+eps_window_days: 7                       # rolling eps_S: trailing window, strictly earlier candidates (chosen on validation by coverage)
+eps_window_grid_days: [1, 3, 7, 14]

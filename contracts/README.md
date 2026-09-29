@@ -33,19 +33,42 @@ charged transfer.
 src/
   SurplusSharingAccounting.sol
   CumulativeSurplusAccounting.sol
+  CumulativeSurplusAccountingLib.sol
+  hooks/
+    MinimalBaseHook.sol
+    ParticipationAwareHook.sol
+  mocks/
+    MockOracle.sol
+  interfaces/
+    IReferenceOracle.sol
 test/
   SurplusSharingAccounting.t.sol
   CumulativeSurplusAccounting.t.sol
+  utils/
+    HookMiner.sol
+  hooks/
+    HookTestBase.sol
+    ParticipationAwareHook.t.sol
+    HookGasBenchmark.t.sol
 python/
   hook_replay.py
   fragmentation_replay.py
 foundry.toml
+remappings.txt
 ```
 
 `SurplusSharingAccounting.sol` is a stateless implementation of `F`.
 `CumulativeSurplusAccounting.sol` is a Cancun-EVM accounting prototype that
 uses `TSTORE`/`TLOAD` to lock parameters, accumulate two-token baseline deltas,
-and maintain a pool-specific watermark during one transaction.
+and maintain a pool-specific watermark during one transaction; its private
+logic lives in `CumulativeSurplusAccountingLib.sol` so both the standalone
+contract and `ParticipationAwareHook.sol` share one internal-library
+implementation instead of duplicating it (and never collide on transient
+storage, since the library namespaces slots by `address(this)`).
+`ParticipationAwareHook.sol` wires that same accounting into real
+`beforeSwap`/`afterSwap` callbacks against a genuine Uniswap v4-core
+`PoolManager`, so its gas cost includes oracle access, transient-storage
+tracking, and callback routing rather than only the arithmetic core.
 
 ## 1. Install dependencies
 
@@ -55,16 +78,46 @@ Python dependencies:
 python -m pip install numpy pandas
 ```
 
-Foundry dependency:
+Foundry dependencies:
 
 ```bash
 forge install foundry-rs/forge-std --no-git
+forge install Uniswap/v4-core@v4.0.0 --no-git
 ```
 
-The supplied `foundry.toml` selects Solidity 0.8.24, the Cancun EVM, and the
-IR compilation pipeline. Cancun is required for transient-storage opcodes, and
-`via_ir = true` avoids legacy-code-generator stack limits in the cumulative
-accounting path. Gas measurements must use this same compiler configuration.
+`forge install` also pulls v4-core's own pinned `openzeppelin-contracts` and
+`solmate` submodules as flat siblings under `lib/`; `remappings.txt` maps
+`v4-core/`, `@openzeppelin/`, and `solmate/` to those paths (re-run
+`forge install` rather than editing the remappings by hand if v4-core's
+pinned commits ever change). `HookMiner` (CREATE2 salt mining for hook
+address flags) is vendored locally in `test/utils/HookMiner.sol` rather than
+pulled from `v4-periphery`, since that helper lives outside v4-core in a
+separately, loosely versioned repo.
+
+The supplied `foundry.toml` selects Solidity **0.8.26** (forced by v4-core
+`v4.0.0`'s own pragma pin; the accounting-only contracts previously targeted
+`^0.8.24` and compile unchanged under 0.8.26), the Cancun EVM, and the IR
+compilation pipeline, with `optimizer_runs = 200` (this repo's existing
+setting, deliberately **not** v4-core's own `44444444` — that would change
+gas numbers project-wide and inflate build time for no benefit here, so
+absolute hook gas figures here will not exactly match a
+production-optimized v4 deployment). Cancun is required for
+transient-storage opcodes, and `via_ir = true` avoids legacy-code-generator
+stack limits in the cumulative accounting path. Gas measurements must use
+this same compiler configuration.
+
+Note on the solc 0.8.24 -> 0.8.26 re-baseline: regenerating
+`results/solidity_gas.csv` and `results/cumulative_solidity_gas.csv` after
+the bump (before any v4-core code was added) changed the *total* gas
+reported by `SurplusSharingAccountingTest.test_GasBenchmark`/
+`test_VectorFile` from roughly 84.0-84.4M down to roughly 6.3-6.5M. The
+per-call arithmetic-only figure used elsewhere in this document
+(~4,192-4,801 gas) is unaffected; the large total-gas delta is confined to
+these two aggregate benchmark tests, which sum gas across every vector in
+the suite in a single Forge-reported number, and has not been further
+root-caused (candidates include solc's own codegen changes between the two
+compiler minor versions interacting with `via_ir`). Treat the per-call
+figures, not the aggregate test totals, as the numbers to cite.
 
 ## 2. Prepare historical events
 
@@ -137,6 +190,19 @@ python python/hook_replay.py \
   --solidity-gas-csv results/solidity_gas.csv
 ```
 
+Optionally add `--hook-lifecycle-gas-csv results/hook_lifecycle_gas.csv`
+(produced in step 8 below) to also compute a third
+`including_full_lifecycle_hook_overhead` variant in
+`results/hook_replay_summary.csv`, alongside the existing
+`ignoring_hook_overhead`/`including_hook_overhead` variants. That variant
+subtracts the true full-lifecycle hook gas `G_hook` from the participation
+margin instead of the arithmetic-only figure: since the benchmark grid in
+step 8 is a fixed scenario sweep rather than a per-event measurement, each
+replay event conservatively uses the maximum `gas_used_with_hook` observed
+across valid-oracle, non-reverted scenarios in that grid as `G_hook`. Expect
+`including_full_lifecycle_hook_overhead`'s `participation_rate` to be lower
+than the arithmetic-only variants' — it is the fully-costed number.
+
 ## 5. Test transaction-scoped accounting
 
 ```bash
@@ -196,22 +262,105 @@ By default, the adversarial optimizer permits zero-sized limiting fragments.
 This reports the infimum of the old rule. Use `--minimum-fragment-usd` to impose
 a positive economically or numerically meaningful fragment size.
 
+## 7. Fuzz test the v4 hook prototype
+
+`ParticipationAwareHook.sol` is exercised against a real, freshly deployed
+`PoolManager` (via v4-core's own `test/utils/Deployers.sol` fixture) with a
+CREATE2-mined hook address, real `PoolSwapTest`/`PoolModifyLiquidityTest`
+routers, and a `MockOracle` with a per-pool settable failure mode (stale,
+zero-price, incomplete-round, self-reported-invalid), not a lightweight
+simulation of the callback logic.
+
+```bash
+forge test --match-contract ParticipationAwareHookTest -vv
+```
+
+For a paper-quality run, increase the fuzz run count:
+
+```bash
+forge test --match-contract ParticipationAwareHookTest --fuzz-runs 10000
+```
+
+The suite covers: the `zeroForOne`-derived direction mapping; boundary
+values of `K_hat`, `delta`, `lambda`, `gamma`, and swap size (from dust to
+near-`uint128` scale); constructor rejection of invalid `lambda`/`gamma`;
+monotone charge behavior across single-tick and multi-tick-crossing swap
+sequences; fail-open behavior under every invalid oracle mode (the swap
+never reverts, `marginalCharge` stays zero, and `OracleRejected` fires with
+the matching reason); and isolation between two pools sharing one hook
+instance, driven through real swaps rather than direct library calls.
+
+## 8. Full-lifecycle hook gas benchmark
+
+The arithmetic-only figures from steps 4-5 (~4,192-4,801 gas) measure only
+`SurplusSharingAccounting`/`CumulativeSurplusAccounting`'s internal
+computation. They exclude oracle access, transient-storage tracking, and
+Uniswap's own callback-routing overhead — all of which a deployed hook must
+pay on every swap. `HookGasBenchmark.t.sol` measures `gasleft()` around the
+entire `swapRouter.swap(...)` call against the real hook and pool, and
+records an identically-sized, identically-liquidity-seeded baseline swap
+with hooks disabled (`address(0)`) for comparison.
+
+```bash
+forge test --match-test test_GasBenchmarkFullLifecycle -vv
+```
+
+This regenerates `results/hook_lifecycle_gas.csv` (path overridable via
+`HOOK_LIFECYCLE_GAS_OUTPUT`) over a fixed, deterministic scenario grid: `{1,
+2, 4, 8, 16}` fragments (a fixed total swap notional split into that many
+sequential callbacks, mirroring `test_GasBenchmarkCumulative`'s convention)
+x `{single-tick, multi-tick}` swap sizes x `{valid, stale, zero-price,
+incomplete-round, self-invalid}` oracle states, one row per fragment:
+
+| column                 | meaning                                                             |
+| ---------------------- | -------------------------------------------------------------------- |
+| `scenario_id`          | index into the fragments x tick-class x oracle-mode grid            |
+| `fragments`            | total fragment count for this scenario                              |
+| `fragment_index`       | 1-based position of this row within the scenario                    |
+| `oracle_mode`          | `MockOracle` mode active for the scenario                           |
+| `swap_amount_wad`      | this fragment's swap size                                           |
+| `zero_for_one`         | swap direction                                                      |
+| `ticks_crossed`        | tick-spacing-aligned boundaries crossed by this fragment             |
+| `tick_crossing_class`  | `single-tick` or `multi-tick`                                       |
+| `cap_binds`            | whether `computeTransfer`'s cap (not the proportional target) bound |
+| `gas_used_with_hook`   | gas for the fragment's swap against the real hook                   |
+| `gas_used_without_hook`| gas for the identical swap on a `hooks = address(0)` baseline pool  |
+| `marginal_charge_wad`  | this fragment's watermark increase                                  |
+| `cumulative_target_wad`| `computeTransfer`'s target evaluated on this fragment's cumulative surplus |
+| `reverted`             | true if either swap reverted                                        |
+
+Invalid-oracle rows report lower `gas_used_with_hook` than valid-oracle rows
+(the hook fails open before doing any accounting work) and
+`cumulative_target_wad = 0` on every invalid-oracle row, confirming the
+fail-open path never charges. Feed this CSV into `hook_replay.py` via
+`--hook-lifecycle-gas-csv` (step 4) to fold the true full-lifecycle
+`G_hook` into the participation-margin analysis.
+
 ## Interpretation and implementation scope
 
-The cumulative Solidity contract is an accounting prototype, not a complete
-Uniswap v4 hook. In particular:
+`CumulativeSurplusAccounting.sol`/`CumulativeSurplusAccountingLib.sol` are an
+accounting prototype; `ParticipationAwareHook.sol` wires that same
+accounting into real v4-core `beforeSwap`/`afterSwap` callbacks (oracle
+access, transient-storage tracking, and callback routing are exercised, not
+simulated), but is still not a deployable hook. In particular:
 
-- the caller supplies the initial correction direction;
+- the correction direction is derived from each swap's own `zeroForOne`
+  flag rather than a price-discrepancy computation against the AMM's own
+  `sqrtPriceX96` (a deliberate simplification chosen to avoid a 512-bit
+  price-squaring step on every swap — see the NatSpec in
+  `ParticipationAwareHook.sol`);
 - deltas and prices are already normalized to WAD common-numeraire units;
 - the watermark is maintained in that common numeraire;
 - settlement-token conversion and conversion remainders are not implemented;
-- oracle access, callback authorization, pool-state reads, vault settlement,
-  and token transfers are excluded; and
+- **settlement — actually transferring `marginalCharge` to LPs — is out of
+  scope**; the hook only measures and records the charge that a production
+  integration would still need to collect and route through a vault; and
 - the public harness methods should become internal hook-controlled operations
   in a deployable implementation.
 
-Accordingly, report the arithmetic-only and cumulative-accounting gas results
-separately. Neither number is the total overhead of a deployed v4 hook.
+Accordingly, report the arithmetic-only, cumulative-accounting, and
+full-lifecycle gas results separately; only the full-lifecycle figure from
+step 8 is a defensible estimate of `G_hook`.
 
 The participation guarantee applies to the canonical unsplit execution.
 Fragmented executions bear their additional gas costs, and reversal paths may

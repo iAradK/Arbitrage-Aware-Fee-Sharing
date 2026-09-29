@@ -9,6 +9,7 @@ import {IReferenceOracle} from "../interfaces/IReferenceOracle.sol";
 /// consuming hooks own staleness/zero-price/round-completeness checks are what catch
 /// the bad data, not this mocks own valid flag. SelfReportedInvalid instead reports
 /// valid=false, exercising the branch where the hook trusts the oracles own signal.
+/// Revert makes latestPrice revert, exercising the hooks try/catch around the read.
 contract MockOracle is IReferenceOracle {
     /// @dev Comfortably larger than any staleness threshold a hook is expected to
     /// configure, so ForceStale reads as stale regardless of block.timestamp.
@@ -19,8 +20,11 @@ contract MockOracle is IReferenceOracle {
         ForceStale,
         ZeroPrice,
         IncompleteRound,
-        SelfReportedInvalid
+        SelfReportedInvalid,
+        Revert
     }
+
+    error OracleUnavailable();
 
     struct PoolConfig {
         uint256 priceWad;
@@ -49,6 +53,7 @@ contract MockOracle is IReferenceOracle {
     {
         PoolConfig memory cfg = _configs[poolId];
 
+        if (cfg.mode == Mode.Revert) revert OracleUnavailable();
         if (cfg.mode == Mode.ForceStale) {
             // Always at least STALE_OFFSET seconds in the past (relative to "now",
             // not a fixed absolute timestamp): a hardcoded absolute value like 1

@@ -85,7 +85,7 @@ contract ParticipationAwareHookTest is HookTestBase {
         vm.assume(lambdaWad > 1e18 || gammaWad >= 1e18);
 
         bytes memory args =
-            abi.encode(manager, oracle, uint256(0), lambdaWad, gammaWad, uint256(0), STALENESS_THRESHOLD_SECONDS);
+            abi.encode(manager, oracle, VAULT, uint256(0), lambdaWad, gammaWad, uint256(0), STALENESS_THRESHOLD_SECONDS);
         (, bytes32 salt) = HookMiner.find(address(this), HOOK_FLAGS, type(ParticipationAwareHook).creationCode, args);
 
         if (lambdaWad > 1e18) {
@@ -93,7 +93,7 @@ contract ParticipationAwareHookTest is HookTestBase {
         } else {
             vm.expectRevert(SurplusSharingAccounting.InvalidGamma.selector);
         }
-        new ParticipationAwareHook{salt: salt}(manager, oracle, 0, lambdaWad, gammaWad, 0, STALENESS_THRESHOLD_SECONDS);
+        new ParticipationAwareHook{salt: salt}(manager, oracle, VAULT, 0, lambdaWad, gammaWad, 0, STALENESS_THRESHOLD_SECONDS);
     }
 
     /// @dev Sequential same-direction swap fragments within one transaction: the
@@ -121,7 +121,7 @@ contract ParticipationAwareHookTest is HookTestBase {
         bool zeroForOne,
         uint256 swapAmount
     ) public {
-        MockOracle.Mode mode = MockOracle.Mode(bound(modeSeed, 1, 4));
+        MockOracle.Mode mode = MockOracle.Mode(bound(modeSeed, 1, 5));
         swapAmount = bound(swapAmount, 1e6, 5e20);
         bytes32 poolIdBytes = bytes32(PoolId.unwrap(poolAId));
 
@@ -157,6 +157,91 @@ contract ParticipationAwareHookTest is HookTestBase {
         assertEq(stateB.initialDirection, int8(-1));
     }
 
+    /// @dev Reference price 1.2 (token1 worth 1.2 token0) against a pool at 1:1, so a
+    /// zeroForOne swap is price-correcting with positive surplus. Exact input charges
+    /// the output token (token1): the swapper's output is reduced by exactly the amount
+    /// minted to the vault, which is the charge converted at the reference price.
+    function test_Settlement_ExactInput_ChargesOutputTokenToVault() public {
+        bytes32 poolIdBytes = bytes32(PoolId.unwrap(poolAId));
+        oracle.setPrice(poolIdBytes, 1.2e18);
+
+        BalanceDelta swapperDelta = _swapExactIn(poolA, true, 100e18);
+        ParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
+
+        uint256 surplus = _surplus(state);
+        (uint256 target,) = hook.computeTransfer(surplus, EXECUTION_MARGIN_HAT_WAD, LAMBDA_WAD, GAMMA_WAD, DELTA_WAD);
+        uint256 expectedTokens = (target * 1e18) / 1.2e18;
+        assertGt(expectedTokens, 0, "scenario must produce a positive charge");
+
+        assertEq(manager.balanceOf(VAULT, currency1.toId()), expectedTokens, "vault claims");
+        assertEq(manager.balanceOf(VAULT, currency0.toId()), 0, "no charge in the specified token");
+        assertEq(int256(swapperDelta.amount1()), state.cumulativeDelta1Wad - int256(expectedTokens), "output reduced");
+        assertEq(int256(swapperDelta.amount0()), state.cumulativeDelta0Wad, "input unchanged");
+        assertLe(state.watermark, target, "watermark never exceeds the cumulative target");
+        assertGe(state.watermark * 1e18, expectedTokens * 1.2e18, "watermark covers the value collected");
+    }
+
+    /// @dev Exact output charges the input token (token0, the numeraire), so the
+    /// token amount equals the numeraire charge with no conversion remainder.
+    function test_Settlement_ExactOutput_ChargesInputTokenToVault() public {
+        bytes32 poolIdBytes = bytes32(PoolId.unwrap(poolAId));
+        oracle.setPrice(poolIdBytes, 1.2e18);
+
+        BalanceDelta swapperDelta = _swapExactOut(poolA, true, 100e18);
+        ParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
+
+        (uint256 target,) =
+            hook.computeTransfer(_surplus(state), EXECUTION_MARGIN_HAT_WAD, LAMBDA_WAD, GAMMA_WAD, DELTA_WAD);
+        assertGt(target, 0, "scenario must produce a positive charge");
+
+        assertEq(manager.balanceOf(VAULT, currency0.toId()), target, "vault claims");
+        assertEq(manager.balanceOf(VAULT, currency1.toId()), 0, "no charge in the specified token");
+        assertEq(int256(swapperDelta.amount0()), state.cumulativeDelta0Wad - int256(target), "input increased");
+        assertEq(int256(swapperDelta.amount1()), state.cumulativeDelta1Wad, "output unchanged");
+        assertEq(state.watermark, target);
+    }
+
+    /// @dev Fragmented exact-input correction within one transaction: the total
+    /// minted to the vault, valued at the reference price, never exceeds the final
+    /// watermark, and the watermark never exceeds the cumulative target.
+    function testFuzz_Settlement_FragmentsNeverOvercollect(uint8 fragmentCount) public {
+        fragmentCount = uint8(bound(fragmentCount, 1, 16));
+        bytes32 poolIdBytes = bytes32(PoolId.unwrap(poolAId));
+        oracle.setPrice(poolIdBytes, 1.2e18);
+
+        for (uint256 i = 0; i < fragmentCount; i++) {
+            _swapExactIn(poolA, true, 100e18 / fragmentCount);
+        }
+        ParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
+        (uint256 target,) =
+            hook.computeTransfer(_surplus(state), EXECUTION_MARGIN_HAT_WAD, LAMBDA_WAD, GAMMA_WAD, DELTA_WAD);
+
+        uint256 minted = manager.balanceOf(VAULT, currency1.toId());
+        assertGt(minted, 0);
+        assertLe(minted * 1.2e18, state.watermark * 1e18, "collected value within watermark");
+        assertLe(state.watermark, target, "watermark within cumulative target");
+    }
+
+    function _surplus(ParticipationAwareHook.TransientState memory state) private pure returns (uint256) {
+        (, int256 value0) =
+            CumulativeSurplusAccountingLib.tryMulSignedWad(state.cumulativeDelta0Wad, state.referencePrice0Wad);
+        (, int256 value1) =
+            CumulativeSurplusAccountingLib.tryMulSignedWad(state.cumulativeDelta1Wad, state.referencePrice1Wad);
+        int256 totalValue = value0 + value1;
+        return totalValue > 0 ? uint256(totalValue) : 0;
+    }
+
+    function _swapExactOut(PoolKey memory key, bool zeroForOne, uint256 amount) internal returns (BalanceDelta) {
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: zeroForOne,
+            amountSpecified: int256(amount),
+            sqrtPriceLimitX96: zeroForOne ? MIN_PRICE_LIMIT : MAX_PRICE_LIMIT
+        });
+        PoolSwapTest.TestSettings memory settings =
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});
+        return swapRouter.swap(key, params, settings, ZERO_BYTES);
+    }
+
     function _deployCustomHookAndPool(
         uint256 executionMarginHatWad,
         uint256 lambdaWad,
@@ -164,11 +249,11 @@ contract ParticipationAwareHookTest is HookTestBase {
         uint256 deltaWad
     ) private returns (ParticipationAwareHook customHook, PoolKey memory key, PoolId id) {
         bytes memory args =
-            abi.encode(manager, oracle, executionMarginHatWad, lambdaWad, gammaWad, deltaWad, STALENESS_THRESHOLD_SECONDS);
+            abi.encode(manager, oracle, VAULT, executionMarginHatWad, lambdaWad, gammaWad, deltaWad, STALENESS_THRESHOLD_SECONDS);
         (address minedAddress, bytes32 salt) =
             HookMiner.find(address(this), HOOK_FLAGS, type(ParticipationAwareHook).creationCode, args);
         customHook = new ParticipationAwareHook{salt: salt}(
-            manager, oracle, executionMarginHatWad, lambdaWad, gammaWad, deltaWad, STALENESS_THRESHOLD_SECONDS
+            manager, oracle, VAULT, executionMarginHatWad, lambdaWad, gammaWad, deltaWad, STALENESS_THRESHOLD_SECONDS
         );
         require(address(customHook) == minedAddress, "mined address mismatch");
 

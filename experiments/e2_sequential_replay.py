@@ -11,6 +11,9 @@ v2 (DECISIONS V5, V6, V8): --cadence k lets the searcher act only every k minute
 a trailing window, strictly earlier, seeded with the preceding split); per-day aggregates are written for the day-block
 bootstrap (e2_daily_<tag>.parquet). --median-only restricts the run to the median reservation regime.
 
+v3 (DECISIONS W2): with `nohook_baseline: true` the run adds `baseline_nohook`, which pays no hook overhead, and writes
+e2_nohook_steps_<tag>.parquet for experiments/e2_hook_gas.py.
+
   python experiments/e2_sequential_replay.py --split valid
   python experiments/e2_sequential_replay.py --freeze
   python experiments/e2_sequential_replay.py --split test --confirm-frozen
@@ -82,6 +85,7 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
     post_err = np.full((T, nC), np.nan, dtype=np.float32)
     acc = {k: np.zeros(nC) for k in ("n_bf", "n_exec", "n_viol_q0", "n_capviol", "sum_r", "sum_pi", "sum_S", "sum_corr", "sum_lp_bp")}
     step_r = np.zeros((T, nC), dtype=np.float32)
+    step_exec = np.zeros((T, nC), dtype=bool)          # executed corrections per step and configuration
     cS, cSh, cbf = np.zeros(T), np.zeros(T), np.zeros(T, dtype=bool)     # config 0 (baseline) candidates, USD
     tq = cfg["eps_quantile"]
     rolling = eps_seed is not None
@@ -172,6 +176,7 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
         acc["sum_pi"][ex] += Pi[rj, jj] * usd
         acc["sum_S"][ex] += S[rj, jj] * usd
         step_r[i, ex] = r[rj, jj] * usd
+        step_exec[i, ex] = True
         hodl = (x[ex] * pib + y[ex]) * usd
         acc["sum_lp_bp"][ex] += (r[rj, jj] - S[rj, jj]) * usd / hodl * 1e4
         dacc["n_exec"][di, ex] += 1
@@ -198,7 +203,7 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
     res["recapture_rate"] = np.where(acc["sum_S"] > 0, acc["sum_r"] / np.where(acc["sum_S"] > 0, acc["sum_S"], 1), np.nan)
     res["eps_S_used_median_usd"] = float(np.nanmedian(eps_used)) if np.isfinite(eps_used).any() else np.nan
     daily = [pd.DataFrame({"day": days, "cfg": j, **{k_: v[:, j] for k_, v in dacc.items()}}) for j in range(nC)]
-    return {"table": res, "step_protection": step_r, "etw": pe, "daily": pd.concat(daily, ignore_index=True),
+    return {"table": res, "step_protection": step_r, "step_exec": step_exec, "etw": pe, "daily": pd.concat(daily, ignore_index=True),
             "cand": pd.DataFrame({"t": g["t"], "S_usd": cS, "S_hat_usd": cSh, "bf": cbf}),
             "nohook": pd.DataFrame({"t": g["t"], "gas_wei": gas_a, "act": nh_act, "S_usd": nh_S, "C_usd": nh_C,
                                     "C_hook_usd": nh_Ch, "f150": nh_f150, "f180": nh_f180}) if jn >= 0 else None}
@@ -301,7 +306,7 @@ def main():
     reporting.write_table(head, out / "tables" / f"e2_headline_{tag}", {"execution_rate": "{:.3f}", "participation_violation_rate": "{:.3f}",
                           "cap_violation_rate": "{:.3f}", "etw_mean": "{:.2e}", "etw_p95": "{:.2e}", "protection_usd": "{:,.0f}", "searcher_net_usd": "{:,.0f}"})
     reporting.write_manifest("e2", cfg, [CACHE / "aligned" / f"{kk}.parquet" for kk in keys], a.split,
-                             {"hook_lag_min": d, "cadence_min": k, "gas_units": gas_units, "eps_mode": cfg["eps_mode"]})
+                             {"hook_lag_min": d, "cadence_min": k, "gas_units": gas_units, "eps_mode": cfg["eps_mode"]}, tag=tag)
     with pd.option_context("display.width", 250, "display.max_columns", 30, "display.max_rows", 200):
         print(head[head["variant"].isin(["raw", "corr24h"])].round(4).to_string(index=False))
 

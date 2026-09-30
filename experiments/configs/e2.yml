@@ -27,7 +27,7 @@ cadences_min: [1, 5, 15]     # searcher cadence runs: --cadence k (median regime
 nohook_baseline: true        # adds `baseline_nohook`, which pays gas_units only. R is unchanged (already calibrated at gas_units).
 hook_gas_rule:
   gas_quantile: 0.90         # top gas-price decile: g_t >= P90 of g_t over all minutes of the split (chain-wide, one cutoff for all pools)
-  material_share: 0.01       # material if, in some pool, X = |F150 and not F180| / |F150| >= 1% on the no-hook replay path (per pool, never pooled)
-  material_etw_ratio: 1.01   # or if the CI of mean E_TW(baseline) / mean E_TW(baseline_nohook) lies entirely above 1.01
+  material_etw_ratio: 1.01   # material in a pool if the CI of mean E_TW(baseline) / mean E_TW(baseline_nohook) lies entirely above 1.01
+                             # X = |F150 and not F180| / |F150| (per pool, never pooled) is reported but does not decide
   ci: 0.95                   # paired day-block bootstrap, same B and seed as e2_bootstrap.py
   bootstrap_B: 2000

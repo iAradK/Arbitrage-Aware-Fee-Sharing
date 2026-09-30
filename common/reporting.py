@@ -55,14 +55,21 @@ def freeze(exp: str, cfg: dict) -> None:
     (out_dir(exp) / "frozen_config.sha256").write_text(config_hash(cfg))
 
 
-def write_manifest(exp: str, cfg: dict, inputs: list[Path], split: str, extra: dict | None = None) -> None:
+def write_manifest(exp: str, cfg: dict, inputs: list[Path], split: str, extra: dict | None = None,
+                   tag: str | None = None, latest: bool = True) -> None:
+    """manifest.json records the latest run of the experiment. With `tag`, the run also gets its own manifest_<tag>.json,
+    which later runs of other tags do not overwrite. `latest=False` writes only the tagged file (analysis scripts)."""
     m = {"experiment": exp, "split": split, "git_commit": git_commit(), "config_hash": config_hash(cfg),
          "inputs": {str(Path(p).relative_to(REPO)): sha256(p) for p in inputs}}
     dm = RESULTS / "data_manifest.json"
     if dm.exists():
         m["raw_data_sha256"] = {k: v["sha256"] for k, v in json.load(open(dm))["files"].items()}
     m.update(extra or {})
-    (out_dir(exp) / "manifest.json").write_text(json.dumps(m, indent=1))
+    if tag is not None:
+        m["tag"] = tag
+        (out_dir(exp) / f"manifest_{tag}.json").write_text(json.dumps(m, indent=1))
+    if latest:
+        (out_dir(exp) / "manifest.json").write_text(json.dumps(m, indent=1))
 
 
 def _tex_escape(s: str) -> str:

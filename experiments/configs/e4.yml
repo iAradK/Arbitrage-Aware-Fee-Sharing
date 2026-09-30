@@ -21,6 +21,13 @@ pyth:
   # DECISIONS W1: July only. Events thin out from late July (4-48 per week in August, gaps of 2-3 days, likely an
   # incomplete download), so candidates from 2026-08-01 on are dropped rather than given a days-old price
   last_event_cutoff: "2026-08-01 00:00:00+00:00"
+  # v3 (DECISIONS W5): staleness check of the hook (Section 4.3, fail open). Prespecified grid, fixed before the July rerun.
+  # A price older than max_age_s is invalid, so the hook applies r = 0. Rows without a check are kept for comparison only.
+  max_age_s_grid: [60, 300, 3600]
+  # primary A_max, chosen on the validation months only: the largest effective recapture with delta = eps_S (rolling, eta = 0,
+  # k = 1, all candidates) subject to <= 1% participation violations. Valid: 60 s 0.09% / 0.03%, 300 s 0.15% / 0.18%,
+  # 3600 s 0.21% / 2.2% (fails the 1% bound). The whole grid is reported.
+  primary_max_age_s: 300
 # --- v2 (DECISIONS V5, V6)
 cadences_min: [1, 5, 15]                 # the searcher acts every k minutes; k = 1 is the v1 design
 eps_window_days: 7                       # rolling eps_S: trailing window, strictly earlier candidates (chosen on validation by coverage)

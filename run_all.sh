@@ -26,6 +26,11 @@ for D in 0 1 5; do for K in 1 5 15; do
   $PY experiments/e2_sequential_replay.py --split test --confirm-frozen --lag $D --cadence $K --median-only    # v2
   T="test_lag${D}"; [ $K != 1 ] && T="${T}_k${K}"; $PY experiments/e2_bootstrap.py --tag "${T}_med"
 done; done
+$PY experiments/e2_hook_gas.py --tag test_lag0_med                  # v3 (DECISIONS W2)
+for RG in low median high; do $PY experiments/e2_bootstrap.py --tag test --regime $RG; done   # v3: reservation-payoff scenarios
+$PY experiments/e2_r_scenarios.py --tag test
+# fees and TVL: needs data/data/subgraph/pool_day_data_jul_aug_2026.json (GRAPH_API_KEY=... $PY data/fetch_pool_day_data.py)
+$PY experiments/fees_tvl_check.py
 for T in test test_lag1_med test_lag5_med test_lag1_k5_med test_lag1_k15_med test_lag5_k15_med; do $PY experiments/e3_pareto_frontier.py --tag $T; done
 $PY experiments/e4_oracle_robustness.py --split test --confirm-frozen
 $PY experiments/e6_fragmentation.py --split test --confirm-frozen

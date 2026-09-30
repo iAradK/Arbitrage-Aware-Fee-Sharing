@@ -114,7 +114,9 @@ def rolling_eps(prior: pd.DataFrame, sh_prior: np.ndarray, cur: pd.DataFrame, sh
     return v[back][len(prior):]
 
 
-def evaluate(c: pd.DataFrame, sh: np.ndarray, eps, eta: float, delta_kind: str, lam: float, gam: float) -> dict:
+def evaluate(c: pd.DataFrame, sh: np.ndarray, eps, eta: float, delta_kind: str, lam: float, gam: float,
+             fail_open: np.ndarray | None = None) -> dict:
+    """fail_open marks candidates whose reference is older than A_max: the hook applies r = 0 to them (Section 4.3)."""
     S, C, R, usd = (c[k].to_numpy() for k in ("S", "C", "R", "usd"))
     K = C + R
     Kh = (1 + eta) * K
@@ -122,6 +124,8 @@ def evaluate(c: pd.DataFrame, sh: np.ndarray, eps, eta: float, delta_kind: str, 
     eK = abs(eta) * K
     delta = {"0": np.zeros(len(c)), "eps_S": eS + 0 * S, "eps_S+eps_K": eS + eK}[delta_kind]
     r = transfer_est(sh, Kh, lam, gam, delta)
+    if fail_open is not None:
+        r = np.where(fail_open, 0.0, r)
     viol = (S - C - r) < R - 1e-9 * np.maximum(1.0, R)
     tot_S = S.sum()
     return {"n": len(c), "violation_rate": float(viol.mean()) if len(c) else np.nan,
@@ -221,6 +225,36 @@ def main():
                                 rows.append({"pool": key, "variant": variant, "scenario": scen, "cadence_min": k, "delay_min": np.nan,
                                              "calibration": cname, "eta": eta, "delta": dk,
                                              "eps_S_usd": float(np.median(eps)) if np.ndim(eps) else eps, **m})
+                    # v3 (DECISIONS W5): staleness check A_max. A price older than A_max is invalid and the hook fails open
+                    # (r = 0). "all" counts fail-open candidates with zero transfer; "valid_price" keeps only fresh ones.
+                    _, _, ap_ = pyth_ref(prior, pyth, cut)
+                    _, _, av_ = pyth_ref(cand["valid"], pyth, cut)
+                    she = s_hat(ce, 0, re_)
+                    for A in cfg["pyth"]["max_age_s_grid"]:
+                        fresh, fresh_p, fresh_v = ae <= A, ap_ <= A, av_ <= A
+                        cvA = cv[fresh_v].reset_index(drop=True)
+                        eps_val_A = eps_usd(cvA, s_hat(cvA, 0, rv[fresh_v]), q)
+                        cpA = cp[fresh_p].reset_index(drop=True)
+                        ceA = ce[fresh].reset_index(drop=True)
+                        eps_roll_A = np.zeros(len(ce))
+                        eps_roll_A[fresh] = rolling_eps(cpA, s_hat(cpA, 0, rp[fresh_p]), ceA, she[fresh], W, q)
+                        scenA = f"pyth_onchain_amax{A}{ksuf}"
+                        eps_rows.append({"pool": key, "variant": variant, "scenario": scenA, "cadence_min": k, "delay_min": np.nan,
+                                         "eps_S_valid_usd": eps_val_A, "eps_S_rolling_median_usd": float(np.median(eps_roll_A[fresh])) if fresh.any() else np.nan,
+                                         "R_usd": R_usd, "n_cand_valid": int(fresh_v.sum()), "n_cand_eval": len(ce), "max_age_s": A,
+                                         "fail_open_share": float(1 - fresh.mean()) if len(ce) else np.nan,
+                                         "fail_open_share_valid_months": float(1 - fresh_v.mean()) if len(av_) else np.nan})
+                        for cname, eps in [(fixed_name, np.full(len(ce), eps_val_A)), ("rolling", eps_roll_A)]:
+                            for eta in cfg["etas"]:
+                                for dk in ("0", "eps_S", "eps_S+eps_K"):
+                                    base = {"pool": key, "variant": variant, "scenario": scenA, "cadence_min": k, "delay_min": np.nan,
+                                            "calibration": cname, "eta": eta, "delta": dk, "max_age_s": A,
+                                            "fail_open_share": float(1 - fresh.mean()) if len(ce) else np.nan}
+                                    m = evaluate(ce, she, eps, eta, dk, cfg["lam"], cfg["gamma"], fail_open=~fresh)
+                                    rows.append({**base, "conditioning": "all", "eps_S_usd": float(np.median(eps[fresh])) if fresh.any() else np.nan, **m})
+                                    if fresh.any():
+                                        m = evaluate(ceA, she[fresh], eps[fresh], eta, dk, cfg["lam"], cfg["gamma"])
+                                        rows.append({**base, "conditioning": "valid_price", "eps_S_usd": float(np.median(eps[fresh])), **m})
                 print(key, variant, f"k={k}", "done", {s: len(v) for s, v in cand.items()}, "prior", len(prior), flush=True)
 
     summ = pd.DataFrame(rows)

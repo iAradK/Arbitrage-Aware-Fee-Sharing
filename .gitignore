@@ -52,3 +52,6 @@ Thumbs.db
 
 # Temporary or duplicate test artifacts
 test/*:*:*
+# LaTeX build directories (paper/build.sh)
+build/
+build_*/

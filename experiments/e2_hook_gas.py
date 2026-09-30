@@ -14,8 +14,9 @@ in the top gas-price decile, and repeated on the real observed pool states as a 
 Path-level effect. Mean E_TW of the baseline with hook gas and of the retained margin, each relative to the no-hook
 baseline, and the LP outcome per baseline-feasible step, with paired day-block bootstrap intervals.
 
-Decision (hook_gas_rule in e2.yml, fixed before the test run): the hook gas is material in a pool if X >= material_share
-or the CI of E_TW(baseline) / E_TW(baseline_nohook) lies entirely above material_etw_ratio.
+Decision (hook_gas_rule in e2.yml, fixed before the test run): the hook gas is material in a pool if the CI of
+E_TW(baseline) / E_TW(baseline_nohook) lies entirely above material_etw_ratio. X describes how many corrections the
+overhead removes but does not decide, because the removed corrections barely clear R and move the price little.
 
   python experiments/e2_hook_gas.py --tag valid
   python experiments/e2_hook_gas.py --tag test
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -35,8 +37,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "experiments"))
 
 from common import minutegrid as mg, reporting  # noqa: E402
-from common.pools import CACHE  # noqa: E402
+from common.pools import CACHE, POOLS  # noqa: E402
 from e2_bootstrap import PRIMARY  # noqa: E402
+from e2_sequential_replay import make_configs, simulate  # noqa: E402
 
 CFG = ROOT / "experiments" / "configs" / "e2.yml"
 
@@ -62,6 +65,21 @@ def boot_share(s: pd.DataFrame, rng, B: int, ci: float) -> tuple[float, float]:
     tot = d[idx].sum(1)
     x = tot[:, 1] / np.maximum(tot[:, 0], 1)
     return tuple(float(v) for v in np.quantile(x, [(1 - ci) / 2, (1 + ci) / 2]))
+
+
+def gas_share(pool: str, variant: str, split: str, d: int, k: int, R_usd: float, cfg: dict, lam: float, gamma: float) -> dict:
+    """Hook gas paid on the corrections that the retained margin executes, against the funds it recovers. Re-simulates the
+    frozen baseline and retained-margin configurations (same code and config as the run), so no new design choice enters."""
+    C = make_configs(cfg)
+    C = C[(C["mech"] == "baseline") | ((C["mech"] == "retained") & np.isclose(C["lam"], lam) & np.isclose(C["gamma"], gamma))].reset_index(drop=True)
+    g = mg.build_grid(pool, split, variant, lags=tuple(sorted({0, d})))
+    r = simulate(g, POOLS[pool], C, cfg, R_usd, 0.0, d, k)
+    j = int(np.flatnonzero(C["mech"].to_numpy() == "retained")[0])
+    ex = r["step_exec"][:, j]
+    hook = mg.gas_cost_num(g["gas_wei"].to_numpy(), g["eth_in_num"].to_numpy(), cfg["hook_overhead_gas"]) * g["usd_per_num"].to_numpy()
+    tot, prot = float(np.nansum(hook[ex])), float(r["table"].loc[j, "protection_usd"])
+    return {"n_exec_retained": int(ex.sum()), "hook_gas_usd_retained": tot, "hook_gas_usd_mean": tot / max(int(ex.sum()), 1),
+            "protection_retained_usd": prot, "hook_gas_over_protection": tot / prot if prot > 0 else np.nan}
 
 
 def path_effects(daily: pd.DataFrame, rng, B: int, ci: float, lam: float, gamma: float) -> dict:
@@ -105,6 +123,10 @@ def main():
     cut = gas_cutoff(split, rule["gas_quantile"])
     rng = np.random.default_rng(cfg["seed"])
     B, ci = rule["bootstrap_B"], rule["ci"]
+    m_ = re.search(r"lag(\d+)", a.tag)
+    d = int(m_.group(1)) if m_ else cfg["hook_lag_min"]
+    m_ = re.search(r"_k(\d+)", a.tag)
+    k = int(m_.group(1)) if m_ else 1
     gas_hook = cfg["gas_units"] + cfg["hook_overhead_gas"]
     rows = []
     for pool, variant in PRIMARY.items():
@@ -127,8 +149,9 @@ def main():
         nr, mr, xr = share(b150, b180)
         _, _, xr_top = share(b150 & top_r, b180 & top_r)
         pe = path_effects(dl, rng, B, ci, lam, gamma)
+        gs = gas_share(pool, variant, split, d, k, R, cfg, lam, gamma)
         r_b, lo_b, hi_b = pe["etw_ratio_baseline"]
-        material_x, material_etw = bool(x >= rule["material_share"]), bool(lo_b > rule["material_etw_ratio"])
+        material = bool(lo_b > rule["material_etw_ratio"])
         rows.append({"pool": pool, "variant": variant, "R_usd": R,
                      "median_hook_gas_usd": float(s.loc[s["f150"], "C_hook_usd"].median()) if n else np.nan,
                      "n_F150": n, "n_marginal": m, "X": x, "X_ci_lo": x_lo, "X_ci_hi": x_hi,
@@ -139,7 +162,7 @@ def main():
                      "etw_ratio_retained": pe["etw_ratio_retained"][0], "etw_ratio_retained_lo": pe["etw_ratio_retained"][1],
                      "etw_ratio_retained_hi": pe["etw_ratio_retained"][2],
                      "lp_bp_nohook": pe["lp_bp_baseline_nohook"], "lp_bp_baseline": pe["lp_bp_baseline"], "lp_bp_retained": pe["lp_bp_retained"],
-                     "material_X": material_x, "material_etw": material_etw, "material": material_x or material_etw})
+                     "material": material, **gs})
     res = pd.DataFrame(rows)
     reporting.write_table(res, out / "tables" / f"e2_hook_gas_{a.tag}",
                           {c: "{:.4f}" for c in res.columns if c.startswith(("X", "etw_ratio"))} | {"lp_bp_nohook": "{:.5f}", "lp_bp_baseline": "{:.5f}",
@@ -147,6 +170,10 @@ def main():
     decision = {"tag": a.tag, "gas_cutoff_wei": cut, "rule": rule, "headline": {"lambda": lam, "gamma": gamma},
                 "material_any_pool": bool(res["material"].any()), "material_pools": res.loc[res["material"], "pool"].tolist()}
     (out / "tables" / f"e2_hook_gas_{a.tag}.json").write_text(json.dumps(decision, indent=1))
+    src = json.loads((out / f"manifest_{a.tag}.json").read_text()) if (out / f"manifest_{a.tag}.json").exists() else {}
+    reporting.write_manifest("e2", cfg, [out / f"e2_nohook_steps_{a.tag}.parquet", out / f"e2_daily_{a.tag}.parquet"], split,
+                             {"analysis": "e2_hook_gas", "source_tag": a.tag, "source_config_hash": src.get("config_hash")},
+                             tag=f"hook_gas_{a.tag}", latest=False)
     with pd.option_context("display.width", 250, "display.max_columns", 40):
         print(f"top-decile gas cutoff: {cut / 1e9:.3f} gwei")
         print(res[["pool", "n_F150", "n_marginal", "X", "X_ci_lo", "X_ci_hi", "X_top", "X_real", "X_real_top",

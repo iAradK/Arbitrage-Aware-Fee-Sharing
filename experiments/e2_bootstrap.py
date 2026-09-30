@@ -8,6 +8,7 @@ sum steps; protection and searcher payoff are totals over the resampled period. 
 protection between the retained margin and the maximal cap.
 
   python experiments/e2_bootstrap.py --tag test_lag0_med
+  python experiments/e2_bootstrap.py --tag test --regime low      # reservation-payoff scenarios (writes ..._low)
 """
 from __future__ import annotations
 
@@ -39,10 +40,11 @@ def main():
     ap.add_argument("--gamma", type=float, default=0.02)
     ap.add_argument("--B", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=20260924)
+    ap.add_argument("--regime", default="median", choices=["low", "median", "high"])
     a = ap.parse_args()
     out = reporting.out_dir("e2")
     d = pd.read_parquet(out / f"e2_daily_{a.tag}.parquet")
-    d = d[(d["regime"] == "median") & d.apply(lambda r: PRIMARY[r["pool"]] == r["variant"], axis=1)]
+    d = d[(d["regime"] == a.regime) & d.apply(lambda r: PRIMARY[r["pool"]] == r["variant"], axis=1)]
     keep = (np.isclose(d["lam"], 0) | np.isclose(d["lam"], a.lam)) & (np.isclose(d["gamma"], 0) | np.isclose(d["gamma"], a.gamma))
     d = d[keep]
     rng = np.random.default_rng(a.seed)
@@ -71,7 +73,8 @@ def main():
             rows.append({"pool": pool, "variant": PRIMARY[pool], "mech": "retained - cap_gamma0", "metric": "protection_usd",
                          "point": float(pr), "ci_lo": float(lo), "ci_hi": float(hi), "n_days": nd})
     res = pd.DataFrame(rows)
-    reporting.write_table(res, out / "tables" / f"e2_bootstrap_{a.tag}", {"point": "{:.4g}", "ci_lo": "{:.4g}", "ci_hi": "{:.4g}"})
+    stem = f"e2_bootstrap_{a.tag}" + ("" if a.regime == "median" else f"_{a.regime}")
+    reporting.write_table(res, out / "tables" / stem, {"point": "{:.4g}", "ci_lo": "{:.4g}", "ci_hi": "{:.4g}"})
     with pd.option_context("display.width", 250, "display.max_rows", 400):
         print(res[res["metric"].isin(["execution_rate", "protection_usd", "etw_mean"])].round(6).to_string(index=False))
 

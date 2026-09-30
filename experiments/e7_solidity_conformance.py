@@ -166,14 +166,28 @@ def smin(cfg: dict, out: Path, split: str) -> None:
     blocks = pd.read_parquet(CACHE / "block_gas.parquet")
     ts = pd.DatetimeIndex(blocks["timestamp"])
     eth = refprice.lookup_bars(bars["ETHUSDC"], ts)
-    a_usd = g_hat * blocks["gas_price_wei"].to_numpy() * 1e-18 * eth                     # C_gas_hat per block
-    df = pd.DataFrame({"month": ts.strftime("%Y-%m"), "a": a_usd}).dropna()
+    # hook's gas price in Eq. (9): "block_median" = base fee + that block's own median tip (v2);
+    # "train_median_constant" = base fee + a constant tip tau_hat, the median tip_p50 over real fee-history blocks of the train months
+    tip_mode = cfg.get("tip_mode", "block_median")
+    tau_hat = None
+    if tip_mode == "block_median":
+        gas_price = lambda df: df["gas_price_wei"].to_numpy()  # noqa: E731
+    elif tip_mode == "train_median_constant":
+        train = (ts < mg.VALID_START) & (blocks["gas_source"] == "fee_history").to_numpy()
+        tau_hat = float(blocks.loc[train, "tip_p50_wei"].median())
+        gas_price = lambda df: df["base_fee_wei"].to_numpy() + tau_hat  # noqa: E731
+    else:
+        raise ValueError(f"unknown tip_mode {tip_mode}")
+    a_usd = g_hat * gas_price(blocks) * 1e-18 * eth                                       # C_gas_hat per block
+    a_actual_usd = g_hat * blocks["gas_price_wei"].to_numpy() * 1e-18 * eth                # at the block's actual gas price (base + its median tip)
+    df = pd.DataFrame({"month": ts.strftime("%Y-%m"), "a": a_usd, "a_actual": a_actual_usd}).dropna()
     eps_path = RESULTS / "e4" / "tables" / "e4_eps_valid.csv"
     eps_tab = pd.read_csv(eps_path) if eps_path.exists() else None
     rows, shares, gasq = [], [], []
     import e6_fragmentation as e6
     e6cfg = reporting.load_config(ROOT / "experiments" / "configs" / "e6.yml")
     gq = df["a"].quantile([0.10, 0.50, 0.90, 0.99])                  # gas conditions over all blocks of the year (v2, fix 6)
+    gq_actual = df["a_actual"].quantile(gq.index)
     for key in cfg["pools"]:
         R_usd = mg.r_regimes_usd(key, "raw", cfg["arb_tx_gas"], cfg["r_quantiles"])[cfg["r_regime"]]
         eps = 0.0
@@ -183,13 +197,14 @@ def smin(cfg: dict, out: Path, split: str) -> None:
         const = cfg["B_hat_usd"] + cfg["C_hedge_hat_usd"] + cfg["C_slip_hat_usd"] + R_usd + eps
         for qq, a_q in gq.items():
             gasq.append({"pool": key, "gas_quantile": f"P{int(round(qq * 100))}", "C_gas_usd": a_q, "R_protocol_usd": R_usd, "delta_usd": eps,
-                         "S_min_delta0_usd": a_q + const - eps, "S_min_usd": a_q + const})
+                         "S_min_delta0_usd": a_q + const - eps, "S_min_usd": a_q + const,
+                         "C_gas_actual_usd": gq_actual[qq], "hook_gas_actual_usd": gq_actual[qq] * prof["first_call_gas"] / g_hat})
         for mo, gg in df.groupby("month"):
             q = gg["a"].quantile(cfg["smin_quantiles"]) + const
             rows.append({"pool": key, "month": mo, "R_protocol_usd": R_usd, "delta_usd": eps, **{f"S_min_p{int(k * 100)}_usd": v for k, v in q.items()}})
         # share of E6-type opportunities with S >= S_min at their own block
         c, n_raw = e6.all_candidates(key, "raw", split, e6cfg, R_usd)
-        smin_c = g_hat * c["gas_price_wei"].to_numpy() * 1e-18 * c["eth_usd"].to_numpy() + const
+        smin_c = g_hat * gas_price(c) * 1e-18 * c["eth_usd"].to_numpy() + const
         ok = c["S_usd"].to_numpy() >= smin_c
         ok0 = c["S_usd"].to_numpy() >= smin_c - eps                                   # same threshold with delta = 0
         shares.append({"pool": key, "split": split, "n_opportunities": len(c), "share_S_ge_Smin": float(ok.mean()) if len(c) else np.nan,
@@ -201,10 +216,12 @@ def smin(cfg: dict, out: Path, split: str) -> None:
     reporting.write_table(gt, out / "tables" / "e7_smin_gas_conditions", {c: "{:.3f}" for c in gt.columns if c.endswith("usd")})
     sh = pd.DataFrame(shares)
     reporting.write_table(sh, out / "tables" / f"e7_smin_share_{split}", {"share_S_ge_Smin": "{:.3f}", "share_S_ge_Smin_delta0": "{:.3f}", "median_S_usd": "{:.2f}", "median_S_min_usd": "{:.2f}"})
+    gp = "(base_fee + tip_p50 of the block)" if tau_hat is None else f"(base_fee + tau_hat), tau_hat = train-median tip_p50 = {tau_hat:.0f} wei"
     (out / "smin_formula.txt").write_text("S_min = C_gas_hat + B_hat + C_hedge_hat + C_slip_hat + R_protocol + delta,  C_gas_hat = g_hat * gasprice * p_native->USD,  "
-                                          f"g_hat = arb_tx_gas ({cfg['arb_tx_gas']}) + hook first-call overhead ({prof['first_call_gas']:.0f}) = {g_hat:.0f} gas.\n")
+                                          f"g_hat = arb_tx_gas ({cfg['arb_tx_gas']}) + hook first-call overhead ({prof['first_call_gas']:.0f}) = {g_hat:.0f} gas, "
+                                          f"gasprice = {gp}.\n")
     with pd.option_context("display.width", 250, "display.max_columns", 30):
-        print(f"g_hat = {g_hat:.0f} gas")
+        print(f"g_hat = {g_hat:.0f} gas, tip_mode = {tip_mode}, tau_hat = {tau_hat}")
         print(q[q["pool"] == "eth_usdc_005"].round(3).to_string(index=False))
         print(sh.round(3).to_string(index=False))
 

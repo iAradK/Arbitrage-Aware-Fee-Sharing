@@ -11,6 +11,7 @@ sequence_opportunities_per_pool: 2
 sequence_partitions: [2, 4, 8, 16]
 # --- minimum viable surplus  S_min = C_gas_hat + B_hat + C_hedge_hat + C_slip_hat + R_protocol + delta
 arb_tx_gas: 150000                 # gas of the arbitrage transaction excluding the hook (assumption, as in E2/E5/E6)
+tip_mode: train_median_constant   # hook gas price in Eq. (9) = base fee + constant tip tau_hat (train-median tip_p50); v2 used each block's own median tip ("block_median"). User decision 2026-09-29.
 B_hat_usd: 0.0                     # builder payment, hedging and external slippage estimates: no data, set to 0 and stated as such
 C_hedge_hat_usd: 0.0
 C_slip_hat_usd: 0.0

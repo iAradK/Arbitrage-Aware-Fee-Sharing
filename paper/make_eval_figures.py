@@ -26,7 +26,7 @@ POOLS = ["eth_usdc_005", "eth_wbtc_030", "eth_wsteth_001"]
 SHORT = {"eth_usdc_005": "ETH/USDC", "usdc_usdt_0001": "USDC/USDT", "eth_wbtc_030": "ETH/WBTC", "eth_wsteth_001": "ETH/wstETH"}
 VARIANT = {"eth_usdc_005": "raw", "usdc_usdt_0001": "raw", "eth_wbtc_030": "corr24h", "eth_wsteth_001": "corr24h"}
 C = plotstyle.COLORS
-GAS_FIRST, GAS_EXTRA = 30.032, 13.704  # thousand gas, results/e7/gas_profile.json (first_call_gas, extra_fragment_gas)
+GAS_FIRST, GAS_EXTRA = 30.214, 13.823  # thousand gas, current contract with settlement (results/e7/gas_contract_8ca840a/gas_profile.json, DECISIONS W12)
 
 # Okabe-Ito palette. Every series is also told apart by hatching (bars) or line style and marker (lines),
 # so the figures stay readable in grayscale print.

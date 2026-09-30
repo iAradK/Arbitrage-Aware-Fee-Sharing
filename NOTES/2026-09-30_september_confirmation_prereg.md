@@ -104,4 +104,7 @@ a failed or weaker result is reported as it is.
 - Open before the download: the gas overhead of the current contract (`8ca840a`, with settlement) is 30,214 gas
   against the 30,032 that every frozen config uses. The configs stay at 30,032 unless the user decides otherwise
   before the download; any change will be recorded here first.
+- 2026-09-30, decision before any download: the frozen configs keep the pre-settlement hook gas (30,032), so the
+  September run is directly comparable with the test months. The paper reports the gas of the current contract
+  separately (DECISIONS W12).
 - (to be filled: commit of the `confirm` split code, approval of the criteria, download times)

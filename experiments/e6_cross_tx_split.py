@@ -38,12 +38,17 @@ def F(x, c, lam, gam):
 
 
 def best_two_tx_saving(a, c, lam, gam):
-    """Exact max over a1 in [0, a] of F(a) - F(a1) - F(a - a1), evaluated at the breakpoints."""
+    """Exact max over a1 in [0, a] of F(a) - F(a1) - F(a - a1), evaluated at the breakpoints.
+    Returns the saving and whether both transactions of the best split carry a positive charge."""
     xs = (1 - gam) * c / (1 - gam - lam)
     cands = np.stack([np.zeros_like(a), c, xs, a - c, a - xs, a / 2], axis=1)
     cands = np.clip(cands, 0.0, a[:, None])
-    val = F(a[:, None], c[:, None], lam, gam) - F(cands, c[:, None], lam, gam) - F(a[:, None] - cands, c[:, None], lam, gam)
-    return val.max(axis=1)
+    f1, f2 = F(cands, c[:, None], lam, gam), F(a[:, None] - cands, c[:, None], lam, gam)
+    val = F(a[:, None], c[:, None], lam, gam) - f1 - f2
+    j = val.argmax(axis=1)
+    rows = np.arange(len(a))
+    both_charged = (f1[rows, j] > 0) & (f2[rows, j] > 0)
+    return val[rows, j], both_charged
 
 
 def main():
@@ -58,15 +63,20 @@ def main():
     train = (pd.DatetimeIndex(blocks["timestamp"]) < mg.VALID_START) & (blocks["gas_source"] == "fee_history").to_numpy()
     tau_hat = float(blocks.loc[train, "tip_p50_wei"].median())
     gas_tx = cfg["gas_units"] + cfg["hook_overhead_gas"]                 # 180,032
-    iso = pd.read_csv(RESULTS / "e7" / "hook_gas_isolated.csv")
+    # gas of the current contract (commit 8ca840a, with settlement): an extra transaction pays the intrinsic gas, a cold
+    # swap and the hook; if both transactions of the split are charged, the extra one also pays for settling its charge
+    gdir = RESULTS / "e7" / "gas_contract_8ca840a"
+    iso = pd.read_csv(gdir / "hook_gas_isolated.csv")
     swap_gas = float(iso[(iso.n == 1) & (iso.hook == 0)].gas.iloc[0])
     hook_gas = float(iso[(iso.n == 1) & (iso.hook == 1)].gas.iloc[0]) - swap_gas
+    st = pd.read_csv(gdir / "hook_gas_settled.csv").set_index("case")["gas"]
+    settle_gas = float(st["charged_hook"] - st["uncharged_hook"])
     extra_gas = INTRINSIC_GAS + swap_gas + hook_gas
 
     eth = sam["eth_usd"].to_numpy()
     a = sam["S_usd"].to_numpy()
     c = gas_tx * (sam["base_fee_wei"].to_numpy() + tau_hat) * 1e-18 * eth + R_usd + delta
-    s = best_two_tx_saving(a, c, lam, gam)
+    s, both = best_two_tx_saving(a, c, lam, gam)
     grid = np.linspace(0.0, 1.0, 2001)[None, :] * a[:, None]           # brute-force check of the breakpoint maximum
     s_grid = (F(a[:, None], c[:, None], lam, gam) - F(grid, c[:, None], lam, gam) - F(a[:, None] - grid, c[:, None], lam, gam)).max(1)
     assert np.all(s_grid <= s + 1e-9), "grid found a larger saving than the breakpoints"
@@ -74,13 +84,13 @@ def main():
     big = a >= 2 * c
     assert np.all(s[big] >= min(lam, 1 - gam) * c[big] - 1e-9), "saving below the lower bound for a >= 2c"
 
-    cost = extra_gas * sam["gas_price_wei"].to_numpy() * 1e-18 * eth
+    cost = (extra_gas + settle_gas * both) * sam["gas_price_wei"].to_numpy() * 1e-18 * eth
     g7 = pd.read_csv(RESULTS / "e7" / "tables" / "e7_smin_gas_conditions.csv")
     cost_med = float(g7[(g7.pool == POOL) & (g7.gas_quantile == "P50")].C_gas_actual_usd.iloc[0]) * extra_gas / gas_tx
     net, net_fixed = s - cost, s - cost_med
     q = lambda x, p: float(np.quantile(x, p))  # noqa: E731
     row = {"pool": POOL, "variant": VARIANT, "split": SPLIT, "n": len(sam), "lam": lam, "gamma": gam, "delta_usd": delta,
-           "R_usd": R_usd, "tau_hat_wei": tau_hat, "extra_tx_gas": extra_gas,
+           "R_usd": R_usd, "tau_hat_wei": tau_hat, "extra_tx_gas": extra_gas, "settle_gas": settle_gas, "share_best_split_both_charged": float(both.mean()),
            "c_median_usd": q(c, 0.5), "a_median_usd": q(a, 0.5), "share_a_ge_2c": float(big.mean()), "n_a_ge_2c": int(big.sum()),
            "saving_median_usd": q(s, 0.5), "saving_p95_usd": q(s, 0.95),
            "extra_tx_cost_median_usd": q(cost, 0.5), "extra_tx_cost_fixed_usd": cost_med,

@@ -43,3 +43,15 @@ the extra transaction is priced at the actual median gas price that the arbitrag
 | median 0.58 USD, P95 0.75 USD | 0.5751, 0.7526 | same table, `net_median_usd`, `net_p95_usd` |
 
 The reviewer's 1.76 and 0.66 came from rounding before multiplying (0.07 + 0.81 = 0.88).
+
+## Hook gas of the current contract (settlement, commit 8ca840a), added 2026-09-30
+
+| Number in text | Unrounded | Source |
+|---|---|---|
+| 30.2k single swap, 13.8k extra fragment, 5.7k fail-open | 30,214; 13,823; 5,684.5 | `results/e7/gas_contract_8ca840a/gas_profile.json` |
+| 238k for sixteen fragments | 237,559 | `results/e7/gas_contract_8ca840a/tables/e7_gas_isolated.csv` |
+| settlement adds 31.6k, charged swap 61.8k | 31,593; 61,807 | `results/e7/gas_contract_8ca840a/hook_gas_settled.csv` |
+| about 0.02 USD for a charged swap | 61,807 / 180,032 x 0.0651 = 0.0224 | median actual gas price, `e7_smin_gas_conditions.csv` |
+| replays understate by about 0.01 USD | (61,807 - 30,032) / 180,032 x 0.0651 = 0.0115 | same |
+| 185k extra transaction | 21,000 + 133,966 + 30,214 = 185,180 | isolated test of the current contract |
+| split pays for 90%, median 0.57 USD, P95 0.75 USD | 0.9040, 0.5744, 0.7510 | `results/e6/tables/e6_cross_tx_split_test.csv` (current-contract gas, settlement when both parts are charged) |

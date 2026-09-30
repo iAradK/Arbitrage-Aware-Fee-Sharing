@@ -1,8 +1,8 @@
 experiment: e7
 seed: 20260924
-pools: [eth_usdc_005, usdc_usdt_0001, eth_wbtc_030, eth_wsteth_001]
+pools: [eth_usdc_005, eth_wbtc_030, eth_wsteth_001]   # USDC/USDT excluded (fee tier 0.001%, DECISIONS W8/W11)
 # --- conformance vectors (drawn from validation-month replay states; the test months are not used for vectors)
-atomic_states_per_pool: 8          # 4 pools x 8 states x 4 lambdas = 128 cases (the old design)
+atomic_states_per_pool: 8          # 3 pools x 8 states x 4 lambdas = 96 cases (128 with USDC/USDT before W11)
 lambdas: [0.25, 0.5, 0.75, 0.95]
 gamma: 0.05
 delta_from_e4_lag_min: 5           # delta = eps_S(d = 5) fitted on validation (results/e4), per pool

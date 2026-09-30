@@ -97,4 +97,11 @@ a failed or weaker result is reported as it is.
 
 ## Appendix: later commits
 
-(to be filled: commit of the `confirm` split code, approval of the criteria, download times)
+- 2026-09-30, amendment before any September download: E7 now covers the three evaluated pools (DECISIONS W11).
+  Its frozen config hash changes from `70558f065624...` to
+  `1074ff37d1e6df41ead22516cd5044922ac213d36025c09b304017db343da04b`. The S_min tables of the three pools are
+  unchanged. The September E7 run uses this hash. Committed together with this amendment.
+- Open before the download: the gas overhead of the current contract (`8ca840a`, with settlement) is 30,214 gas
+  against the 30,032 that every frozen config uses. The configs stay at 30,032 unless the user decides otherwise
+  before the download; any change will be recorded here first.
+- (to be filled: commit of the `confirm` split code, approval of the criteria, download times)

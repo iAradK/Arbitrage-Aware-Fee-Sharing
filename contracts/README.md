@@ -36,7 +36,8 @@ src/
   CumulativeSurplusAccountingLib.sol
   hooks/
     MinimalBaseHook.sol
-    ParticipationAwareHook.sol
+    ParticipationAwareHook.sol           (block-scoped, persistent storage)
+    TxScopedParticipationAwareHook.sol   (transaction-scoped baseline)
   mocks/
     MockOracle.sol
   interfaces/
@@ -47,9 +48,15 @@ test/
   utils/
     HookMiner.sol
   hooks/
-    HookTestBase.sol
-    ParticipationAwareHook.t.sol
+    BlockScopedHookTestBase.sol
+    BlockScopedHook.t.sol             (run with --isolate, except BlockScopedHookBaseFeeTest)
+    BlockScopedHookScenarios.t.sol    (run with --isolate)
+    BlockScopedHookGas.t.sol          (run with --isolate)
+    HookTestBase.sol                  (transaction-scoped baseline)
+    TxScopedParticipationAwareHook.t.sol
     HookGasBenchmark.t.sol
+    HookGasIsolated.t.sol
+    HookGasSettled.t.sol
 python/
   hook_replay.py
   fragmentation_replay.py
@@ -61,17 +68,25 @@ remappings.txt
 `CumulativeSurplusAccounting.sol` is a Cancun-EVM accounting prototype that
 uses `TSTORE`/`TLOAD` to lock parameters, accumulate two-token baseline deltas,
 and maintain a pool-specific watermark during one transaction; its private
-logic lives in `CumulativeSurplusAccountingLib.sol` so both the standalone
-contract and `ParticipationAwareHook.sol` share one internal-library
-implementation instead of duplicating it (and never collide on transient
-storage, since the library namespaces slots by `address(this)`).
-`ParticipationAwareHook.sol` wires that same accounting into real
-`beforeSwap`/`afterSwap` callbacks against a genuine Uniswap v4-core
-`PoolManager`, so its gas cost includes oracle access, transient-storage
-tracking, callback routing, and settlement rather than only the arithmetic
-core. Each marginal charge is converted into the swap's unspecified currency
-at the locked reference price (rounded down), returned as the `afterSwap`
-return delta, and minted as ERC-6909 claims to the LP-protection vault.
+logic lives in `CumulativeSurplusAccountingLib.sol`, which the
+transaction-scoped baseline hook `TxScopedParticipationAwareHook.sol` also
+uses.
+
+`ParticipationAwareHook.sol` is the hook. Its accounting scope is one block
+per pool: the watermark rule covers every swap of a pool in a block, across
+transactions and senders, so splitting a correction across transactions of one
+block no longer deducts `kappa = K_hat + delta` once per transaction. The state
+is persistent and keyed by `PoolId`, in three packed slots
+(A: `uint64 block | uint128 W | uint16 lambdaBps | uint16 gammaBps`,
+B: `int128 cum0 | int128 cum1`, C: `uint128 reference | uint128 kappa`). The
+first swap of a block whose oracle read is valid opens the scope and locks the
+reference and `kappa = K_const + delta + g_hat * (basefee + tau_hat) * p_ETH`;
+an invalid oracle opens nothing and charges 0, and the next swap retries. All
+logic runs in `afterSwap` (a `beforeSwap` variant cost 2.5-3.2k gas more).
+`quote(key, d0, d1)` returns the charge a swap with that core delta would pay
+now. Each marginal charge is converted into the swap's unspecified currency at
+the locked reference price (rounded down), returned as the `afterSwap` return
+delta, and minted as ERC-6909 claims to the LP-protection vault.
 
 ## 1. Install dependencies
 
@@ -267,7 +282,21 @@ a positive economically or numerically meaningful fragment size.
 
 ## 7. Fuzz test the v4 hook prototype
 
-`ParticipationAwareHook.sol` is exercised against a real, freshly deployed
+Block-scoped hook. `--isolate` makes every external call of a test its own
+transaction, so the tests exercise state that survives across transactions in
+one block (`_assertIsolated` fails the tests otherwise). Forge 1.5.1 runs
+isolated calls with `block.basefee = 0` whatever `vm.fee` sets, so the base-fee
+re-lock of `kappa` is tested without isolation in `BlockScopedHookBaseFeeTest`:
+
+```bash
+forge test --isolate --match-contract '^(BlockScopedHookTest|BlockScopedHookScenariosTest|BlockScopedHookGasTest)$' -vv
+forge test --match-contract BlockScopedHookBaseFeeTest
+```
+
+The transaction-scoped baseline below models one transaction as one test
+function and must run without `--isolate`.
+
+`TxScopedParticipationAwareHook.sol` is exercised against a real, freshly deployed
 `PoolManager` (via v4-core's own `test/utils/Deployers.sol` fixture) with a
 CREATE2-mined hook address, real `PoolSwapTest`/`PoolModifyLiquidityTest`
 routers, and a `MockOracle` with a per-pool settable failure mode (stale,
@@ -275,13 +304,13 @@ zero-price, incomplete-round, self-reported-invalid), not a lightweight
 simulation of the callback logic.
 
 ```bash
-forge test --match-contract ParticipationAwareHookTest -vv
+forge test --match-contract TxScopedParticipationAwareHookTest -vv
 ```
 
 For a paper-quality run, increase the fuzz run count:
 
 ```bash
-forge test --match-contract ParticipationAwareHookTest --fuzz-runs 10000
+forge test --match-contract TxScopedParticipationAwareHookTest --fuzz-runs 10000
 ```
 
 The suite covers: the `zeroForOne`-derived direction mapping; boundary
@@ -303,7 +332,12 @@ The arithmetic-only figures from steps 4-5 (~4,192-4,801 gas) measure only
 `SurplusSharingAccounting`/`CumulativeSurplusAccounting`'s internal
 computation. They exclude oracle access, transient-storage tracking, and
 Uniswap's own callback-routing overhead — all of which a deployed hook must
-pay on every swap. `HookGasBenchmark.t.sol` measures `gasleft()` around the
+pay on every swap. The block-scoped hook's gas is profiled scenario by
+scenario in `BlockScopedHookGas.t.sol` (run with `--isolate`; it writes
+`snapshots/blockScopedHookGas.json` and `BSGAS,...` log lines and compares
+with the transaction-scoped contract). The E7 gas pipeline below
+(`HookGasBenchmark`, `HookGasIsolated`, `HookGasSettled`) still measures the
+transaction-scoped baseline. `HookGasBenchmark.t.sol` measures `gasleft()` around the
 entire `swapRouter.swap(...)` call against the real hook and pool, and
 records an identically-sized, identically-liquidity-seeded baseline swap
 with hooks disabled (`address(0)`) for comparison.
@@ -346,16 +380,14 @@ fail-open path never charges. Feed this CSV into `hook_replay.py` via
 ## Interpretation and implementation scope
 
 `CumulativeSurplusAccounting.sol`/`CumulativeSurplusAccountingLib.sol` are an
-accounting prototype; `ParticipationAwareHook.sol` wires that same
-accounting into real v4-core `beforeSwap`/`afterSwap` callbacks (oracle
-access, transient-storage tracking, and callback routing are exercised, not
-simulated), but is still not a deployable hook. In particular:
+accounting prototype; `ParticipationAwareHook.sol` (block-scoped) and
+`TxScopedParticipationAwareHook.sol` wire the same rule into real v4-core swap
+callbacks (oracle access, storage, and callback routing are exercised, not
+simulated), but neither is a deployable hook. In particular:
 
-- the correction direction is derived from each swap's own `zeroForOne`
-  flag rather than a price-discrepancy computation against the AMM's own
-  `sqrtPriceX96` (a deliberate simplification chosen to avoid a 512-bit
-  price-squaring step on every swap — see the NatSpec in
-  `ParticipationAwareHook.sol`);
+- the transaction-scoped baseline records a correction direction from each
+  swap's own `zeroForOne` flag for diagnostics only; the block-scoped hook
+  stores no direction (neither uses it to compute the charge);
 - deltas are raw token base units and token0 is the numeraire (the oracle
   price is token1's value in token0 base units), so the watermark, `K_hat`,
   and `delta` are all in token0 base units;

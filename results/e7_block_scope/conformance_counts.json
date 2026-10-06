@@ -1,0 +1,10 @@
+{
+  "charged_a": 70,
+  "charged_b": 70,
+  "charged_c": 57,
+  "fragments_per_mode": 360,
+  "mismatch_a_one_tx": 0,
+  "mismatch_b_tx_per_fragment": 0,
+  "mismatch_c_multi_block": 0,
+  "sequences": 48
+}

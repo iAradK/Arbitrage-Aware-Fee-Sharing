@@ -1,0 +1,3 @@
+mode,runs,swaps,charged_swaps,oracle_invalid_swaps,mid_block_updates,runs_multi_block,runs_multi_sender,mismatches
+isolate,2000,12555,2944,1892,1834,1496,1775,0
+no_isolate,2000,12118,2867,1714,1786,1505,1778,0

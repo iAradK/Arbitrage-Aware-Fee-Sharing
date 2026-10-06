@@ -1,0 +1,15 @@
+{
+ "commit": "42017a6307e3c5e4f233c3ca656620cfa5bf0c52",
+ "forge": "1.5.1-stable",
+ "fuzz_seed": 20261006,
+ "fuzz_runs": 2000,
+ "note": "WSL git listed CRLF-only differences as modified; Windows git and WSL git --ignore-cr-at-eol show no change, so the run used the committed sources",
+ "files": {
+  "conformance_counts.json": "0c338d3144e75d8e8e45b922d60ab8a1c1235b1d1c69d71a933c1fc01a1ddc16",
+  "forge_log.txt": "ca4e88fbbdddc0087540289d73f72fb41be6e2d3b0bdd366928bd24123110e49",
+  "fuzz_isolate.csv": "42654416cd4752c33c7fab5736551be37bc22f5e1a03651cdf45ef3789aca0fb",
+  "fuzz_no_isolate.csv": "6113c2978961d8a60038664bc43ea5f227bd8574b5f4b344fd59392f383895a5",
+  "fuzz_summary.csv": "ce24894eb09256312ea27753b659931b047c9f6ccfc2529e028fa9719fbb6fd8",
+  "vectors.json": "40d1d269274caa2603d42e5edb22fae13930fdfb9bb0868fb55f062d08e4b655"
+ }
+}

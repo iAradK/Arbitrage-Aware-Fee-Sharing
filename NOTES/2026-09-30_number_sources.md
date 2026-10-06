@@ -55,3 +55,45 @@ The reviewer's 1.76 and 0.66 came from rounding before multiplying (0.07 + 0.81 
 | replays understate by about 0.01 USD | (61,807 - 30,032) / 180,032 x 0.0651 = 0.0115 | same |
 | 185k extra transaction | 21,000 + 133,966 + 30,214 = 185,180 | isolated test of the current contract |
 | split pays for 90%, median 0.57 USD, P95 0.75 USD | 0.9040, 0.5744, 0.7510 | `results/e6/tables/e6_cross_tx_split_test.csv` (current-contract gas, settlement when both parts are charged) |
+
+## Experiment A: strategic splitting (transaction scope) and spillover (block scope), added 2026-10-06
+
+Script `experiments/eA_strategic_split.py`; all files under `results/eA/` (manifest.json: git 2f994c9+dirty, input/output hashes).
+E2 replays re-executed in memory to recover per-correction transfers; totals equal the stored E2 summaries (`eA_checks.csv`).
+
+| Number | Unrounded | Source |
+|---|---|---|
+| swap gas of an extra transaction 133,966; extra tx 185,180 gas; settlement 31,593 | 133966; 185180; 31593 | `results/e7/gas_contract_8ca840a/hook_gas_isolated.csv` (n=1, hook=0), `hook_gas_settled.csv`; `results/eA/manifest.json` parameters |
+| surviving share at l*, ideal (retained, k=1, d=0), ETH/USDC: 3.24% | 0.032424 | `results/eA/eA_part1_summary.csv`, setting ideal_retained_k1_d0, eth_usdc_005, `surviving_share` |
+| recovered under strategic splitting, ideal: 853 of 26,323 USD | 853.48; 26322.50 | same row, `strategic_usd`, `original_usd` |
+| surviving share at l*, buffered (delta=eps_S, k=15, d=1), ETH/USDC: 0.04% | 0.000390 | same file, buffered_1eps_k15_d1, eth_usdc_005 |
+| recovered under strategic splitting, buffered: 7.5 of 19,139 USD | 7.4558; 19139.24 | same row, `strategic_usd`, `original_usd` |
+| surviving share at l=2: 75.0% ideal, 84.2% buffered | 0.749899; 0.841612 | same rows, `surviving_share_l2` |
+| splitting pays: 93.5% (ideal), 82.1% of charged / 16.1% of all (buffered) | 0.934921; 0.821346; 0.160617 | same rows, `share_split_pays_of_charged`, `share_split_pays` |
+| net saving (charged) median / P95: 1.01 / 8.95 USD ideal; 4.11 / 181 USD buffered | 1.0101, 8.9483; 4.1145, 180.96 | same rows, `net_saving_median_usd_charged`, `net_saving_p95_usd_charged` |
+| l* median / P95 / max: 2 / 10 / 525 ideal; 2 / 15.5 / 165 buffered | | same rows, `l_star_*` |
+| E6 sample ETH/USDC delta=0: surviving 0.09% (l*), 99.2% (l=2), n=730 | 0.000918; 0.992066 | same file, e6_sample_delta0, eth_usdc_005 |
+| E6 sample ETH/USDC: one 69k USD correction carries 87.5% of F | 68997.7; 0.875 | computed from `eA_part1_corrections.csv.gz` (top 1% share of F_a_usd) |
+| E6 sample ETH/WBTC delta=0: surviving 4.1% raw (n=531), 1.7% offset (n=888) | 0.040777; 0.017124 | same file, e6_sample_delta0, eth_wbtc_030 raw / corr24h |
+| block scope ETH/USDC: 20,872 price-correcting swaps, 9.3% preceded by a positive-surplus swap | 0.092900 | `results/eA/eA_part2_summary.csv`, eth_usdc_005, `share_preceded_pos` |
+| overcharged: 0.97% (delta=0), 0.13% (delta=eps_S) | 0.009726; 0.001294 | same file, `share_overcharged` |
+| overcharge median / P95 / max: 0.44 / 1.34 / 1.72 USD (delta=0); 3.54 / 11.1 / 15.9 USD (delta=eps_S) | 0.4424, 1.3427, 1.7156; 3.5387, 11.105, 15.937 | same file, `overcharge_*_usd_pos`, `overcharge_max_usd` |
+| overcharge > own margin (a-kappa)^+: 0.87% / 0.13% | 0.008672; 0.001294 | same file, `share_violation_spec` |
+| Proposition 3 violations: 0 (all pools, both settings); max overcharge / ((1-gamma) kappa) = 1.000 | 0; 1.0 | same file, `n_prop3_violation`, `max_overcharge_over_bound` |
+| 92% of overcharged ETH/USDC swaps (delta=0) follow another origin's swap | 186 / 203 = 0.916 | `results/eA/eA_part2_by_sender.csv`, eth_usdc_005 delta0, `n_overcharged` |
+| partial corrections ETH/USDC completed by another origin: 21.1% same block, 41.3% within 1 block, 51.5% within 2 | 0.210701; 0.41276; 0.515033 | `results/eA/eA_part3_summary.csv`, eth_usdc_005 |
+
+### Experiment A follow-up (2026-10-06), `experiments/eA_followup.py`
+
+| Number | Unrounded | Source |
+|---|---|---|
+| block gas limit 60M in the test months, cap 323-324 transactions | 60,000,000 median, 59,824,338 min; 324 / 323 | `results/eA/eA_fu_capacity_summary.csv`, `gas_limit_*`, `cap_block_*` |
+| surviving share with the block cap, ETH/USDC: 4.30% ideal (1,132 USD), 0.04% buffered | 0.042992; 1131.66; 0.000390 | same file, `surviving_share_block`, `strategic_usd_block` |
+| l <= 50: 18.3% ideal, 11.7% buffered; l <= 10: 37.4% ideal, 41.1% buffered | 0.183159, 0.116508; 0.373548, 0.410935 | same file, `surviving_share_l<=50`, `surviving_share_l<=10` |
+| cap binds for 2 ideal ETH/USDC corrections carrying 3.6% of the transfer | 2; 0.036486 | same file, `n_cap_binds_block`, `transfer_share_cap_binds_block` |
+| l* max 525 uncapped, 324 capped (ideal ETH/USDC) | | same file, `l_star_max_uncapped`, `l_star_max_block` |
+| E6 sample ETH/USDC with block cap: 86.0% survives; 15 corrections, 91.2% of the transfer, exceed the cap | 0.860417; 0.911779 | same file, e6_sample delta0 |
+| 45.1% = mean of per-correction ratios (sum-weighted: 99.4%) | 0.4510147; 0.994325 | `results/eA/eA_fu_aggregation.csv` (reproduces `results/e6/tables/e6_checks_test.csv` indep_over_cumulative_equal n=2) |
+| optimal l=2, mean of ratios: 42.0% (E6 sample), 23.8% (E2 ideal), 24.0% (E2 buffered) | 0.419741; 0.238015; 0.239738 | `eA_fu_aggregation.csv`, method optimal l = 2 |
+| block scope ETH/USDC, participation violation: 0.97% (delta=0), 0.13% (eps_S) of PC swaps | 0.009678; 0.001294 | `results/eA/eA_fu_part2_violation.csv`, `share_violation` |
+| turned into a violation (estimated-feasible before): 0.20% (42 swaps), 0.03% (6) | 0.002012; 0.000287 | same file, `share_turned_of_pc` |

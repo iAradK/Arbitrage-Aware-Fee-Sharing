@@ -77,8 +77,12 @@ class ScopedHookReference:
     reference, kappa = min(K + delta + g * (basefee + tau) * p / WAD, 2^128 - 1) with p = gas_price_token0_wad or
     the reference when that is 0, and lambda, gamma in basis points. Cumulative deltas are int128 and W, kappa
     uint128; leaving those ranges, or a target above 2^128 - 1, saturates W and fails open for the rest of the
-    scope. Charges are numeraire (token0) values before conversion into the settlement token, which equals the
-    hook exactly when the swap settles in token0.
+    scope. Settlement follows the hook: a swap that settles in token0 pays the marginal charge r = target - W and
+    W = target; one that settles in token1 pays floor(r * WAD / reference) token1 base units, and W advances by
+    that amount valued back at the reference, rounded up (<= r, the remainder stays owed). A charge that cannot be
+    converted (r > (2^256 - 1) / WAD or more than int128 token units) saturates W. `swap` returns the value W
+    advanced by (the marginal charge in token0 units), and `last_token_amount` holds what the settlement token
+    received.
 
     The transaction-scoped contract treats an invalid oracle at the first swap as disabling the pool for the rest
     of the transaction, and it has no uint128/int128 limits; neither difference matters for the checks here.
@@ -92,6 +96,7 @@ class ScopedHookReference:
         self.gas_units, self.tau_wei, self.gas_price = gas_units, tau_wei, gas_price_token0_wad
         self.lam_bps, self.gamma_bps, self.scope = lam_bps, gamma_bps, scope
         self.pools: dict = {}
+        self.last_token_amount = 0
 
     def kappa(self, basefee: int, ref_wad: int) -> int:
         k = self.kappa_const
@@ -103,8 +108,10 @@ class ScopedHookReference:
         return min(k, U128_MAX)
 
     def swap(self, pool, block: int, tx: int, d0: int, d1: int, oracle_price_wad: int | None,
-             basefee: int = 0) -> int:
-        """Process one swap's core delta (positive = received by the swapper). Returns the marginal charge r_j."""
+             basefee: int = 0, settle_token0: bool = True) -> int:
+        """Process one swap's core delta (positive = received by the swapper). Returns the marginal charge r_j:
+        the amount W advanced by, in token0 units. `settle_token0` = the swap's unspecified currency is token0."""
+        self.last_token_amount = 0
         key = block if self.scope == "block" else (block, tx)
         s = self.pools.get(pool)
         if s is None or s["key"] != key:
@@ -131,8 +138,19 @@ class ScopedHookReference:
         if target > U128_MAX:
             s["saturated"] = True
             return 0
-        r, s["W"] = target - s["W"], target
-        return r
+        r = target - s["W"]
+        price = WAD if settle_token0 else s["ref"]           # settlement-token price in token0, WAD
+        if r > (2**256 - 1) // WAD:
+            s["saturated"] = True
+            return 0
+        token = r * WAD // price
+        if token > I128_MAX:                                 # does not fit the int128 return delta
+            s["saturated"] = True
+            return 0
+        collected = -(-token * price // WAD)                  # rounded up; equals r when settling in token0
+        s["W"] += collected
+        self.last_token_amount = token
+        return collected
 
 
 def prefix_surplus_wad(deltas0: Sequence[int], deltas1: Sequence[int], pi0_wad: int, pi1_wad: int) -> list[int]:

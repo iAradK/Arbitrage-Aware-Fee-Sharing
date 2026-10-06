@@ -79,3 +79,21 @@ def test_surplus_rounds_toward_zero_like_solidity():
     assert fp.hook_surplus(0, -3, WAD // 2) == 0
     assert fp.hook_surplus(2, -3, WAD // 2) == 1          # -1.5 truncates to -1
     assert fp.hook_surplus(0, 3, WAD // 2) == 1
+
+
+def test_token1_settlement_rounds_down_and_keeps_the_remainder_owed():
+    """Settling in token1 at reference 3 pays floor(r / 3) token1 units; W advances by that value rounded up, so
+    the remainder of r is charged by the next swap of the scope (as the hook's _toSettlementAmount)."""
+    ref = 3 * WAD
+    h = fp.ScopedHookReference(0, 0, 10_000, 0)
+    r1 = h.swap("p", 1, 0, 10, 0, oracle_price_wad=ref, settle_token0=False)   # target 10
+    assert (r1, h.last_token_amount, h.pools["p"]["W"]) == (9, 3, 9)
+    r2 = h.swap("p", 1, 1, 0, 0, oracle_price_wad=ref, settle_token0=True)     # same surplus: the remainder
+    assert (r2, h.last_token_amount, h.pools["p"]["W"]) == (1, 1, 10)
+
+
+def test_settlement_amount_outside_int128_saturates():
+    h = fp.ScopedHookReference(0, 0, 10_000, 0)
+    assert h.swap("p", 1, 0, 0, fp.I128_MAX, oracle_price_wad=2 * WAD, settle_token0=True) == 0   # target 2^128 - 2 > int128
+    assert h.pools["p"]["saturated"]
+    assert h.swap("p", 2, 0, 5, 0, oracle_price_wad=WAD) == 5

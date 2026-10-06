@@ -97,3 +97,34 @@ E2 replays re-executed in memory to recover per-correction transfers; totals equ
 | optimal l=2, mean of ratios: 42.0% (E6 sample), 23.8% (E2 ideal), 24.0% (E2 buffered) | 0.419741; 0.238015; 0.239738 | `eA_fu_aggregation.csv`, method optimal l = 2 |
 | block scope ETH/USDC, participation violation: 0.97% (delta=0), 0.13% (eps_S) of PC swaps | 0.009678; 0.001294 | `results/eA/eA_fu_part2_violation.csv`, `share_violation` |
 | turned into a violation (estimated-feasible before): 0.20% (42 swaps), 0.03% (6) | 0.002012; 0.000287 | same file, `share_turned_of_pc` |
+
+### Experiment A follow-up 2 (2026-10-06): block-scoped hook, `experiments/eA_followup2.py`
+
+- **Output.** `results/eA/eA_fu2_block_scope.csv` (sha256 5ed3e746…79bc4). Manifest: `results/eA/manifest_followup2.json`.
+- **Commit.** git bfa921d+dirty. The dirty files under common/experiments/tests:
+  - modified: `common/data_io.py`, `common/fixedpoint.py`, `common/pools.py`, `experiments/build_aligned_dataset.py`, `experiments/configs/e{1,2,4,5,6}.yml`, `experiments/e2_sequential_replay.py`, `experiments/e6_cross_tx_split.py`, `experiments/fees_tvl_check.py`
+  - untracked: `experiments/e8_*`, `experiments/configs/e8.yml`, `experiments/e6_block_scope_check.py`, `experiments/gas_cold_table.py`, `experiments/make_data_manifest.py`
+- **Why the dirty tree does not matter.** The only dirty file on the computation path is `common/fixedpoint.py`. Its diff adds token1 settlement (`settle_token0=False`) to `ScopedHookReference`. The script uses the default token0 path, where `collected = r`, as in the committed code.
+- **Labels.** Every share is labelled in the CSV's `aggregation` column. SW = sum-weighted (sum of charges / sum of F(a)). MR = mean of per-correction ratios (over F(a) > 0).
+
+| Number | Unrounded | Source |
+|---|---|---|
+| within one block, every split l <= block capacity (323-324): surviving 100%, SW and MR, ideal and buffered, ETH/USDC and ETH/WBTC raw/offset | 1.0 (all 24 part-1 rows) | `eA_fu2_block_scope.csv`, part "1 within one block", `share` |
+| deviation of the block total from F(a): 0 WAD units (1e-18 USD), min and max over all splits | 0; 0 | same rows, `deviation_wei_min`, `deviation_wei_max`, `n_splits_nonzero_deviation` = 0 |
+| 4,139,001 splits, 669,617,937 pieces evaluated | 4139001; 669617937 | same rows, `n_splits_evaluated`, `n_pieces_evaluated` (summed over the 6 rule x pool groups) |
+| l* with gas = 1 for every correction | max 1 | same rows, `l_star_with_gas_max` |
+| scope="tx" reproduces Experiment A's charge(l*): 0 mismatches | 0 | same rows, `tx_scope_check_mismatches` |
+| pool rounding not modelled; Solidity test 0 / 3 / 7 wei for 2 / 4 / 8 tx | | NOTES/2026-10-06_block_scoped_hook.md section 4 |
+| cross-block, l <= 5 blocks, ETH/USDC ideal: SW 50.3% (13,249 USD), MR 12.4% | 0.503348; 13249.37; 0.124317 | `eA_fu2_block_scope.csv`, part "2 cross-block bracket", ideal_retained_k1_d0, eth_usdc_005, l_cap "l<=5 blocks" |
+| cross-block, l <= 75 blocks, ETH/USDC ideal: SW 14.7% (3,881 USD), MR 6.9% | 0.147440; 3880.99; 0.068841 | same, l_cap "l<=75 blocks" |
+| cross-block, l <= 5 blocks, ETH/USDC buffered: SW 60.5% (11,583 USD), MR 27.5% | 0.605186; 11582.81; 0.274587 | same, buffered_1eps_k15_d1 |
+| cross-block, l <= 75 blocks, ETH/USDC buffered: SW 6.5% (1,247 USD), MR 18.1% | 0.065171; 1247.33; 0.180916 | same |
+| ETH/USDC cap binds, ideal: 824 (62.9% of transfer) at 5 blocks, 19 (19.1%) at 75 | 824, 0.629148; 19, 0.190902 | same rows, `n_cap_binds`, `transfer_share_cap_binds` |
+| ETH/USDC cap binds, buffered: 70 (79.8%) at 5 blocks, 3 (19.7%) at 75 | 70, 0.798461; 3, 0.197348 | same |
+| ETH/WBTC raw ideal: SW 51.3% / 1.77%, MR 12.4% / 4.2% (5 / 75 blocks) | 0.512941 / 0.017706; 0.123859 / 0.041687 | same file, ideal_retained_k1_d0, eth_wbtc_030 raw |
+| ETH/WBTC offset ideal: SW 51.9% / 1.75%, MR 13.6% / 4.7% | 0.518783 / 0.017527; 0.136333 / 0.047329 | same, corr24h |
+| ETH/WBTC raw buffered: SW 57.7% / 0.002%, MR 19.4% / 5.6% | 0.577339 / 1.99295e-05; 0.193571 / 0.055556 | same, buffered_1eps_k15_d1, raw |
+| ETH/WBTC offset buffered: SW 61.1% / 0.001%, MR 19.7% / 5.4% | 0.610955 / 1.39659e-05; 0.197155 / 0.054348 | same, corr24h |
+| ETH/WBTC cap binds at 5 / 75 blocks: ideal raw 182 (68.9%) / 4 (8.1%), offset 165 (70.0%) / 3 (7.0%); buffered raw 24 (78.3%) / 0, offset 21 (83.5%) / 0 | 0.688949, 0.080523; 0.699896, 0.069963; 0.782733; 0.834599 | same rows, `n_cap_binds`, `transfer_share_cap_binds` |
+| ETH/wstETH (both caps equal, max l* <= 3): ideal SW 2.4% / 2.3%, MR 11.1% / 34.4% (raw / offset); buffered SW 1.6% / 3.9%, MR 7.5% / 28.1% | 0.023825 / 0.022837; 0.111111 / 0.344004; 0.015695 / 0.039206; 0.074547 / 0.28125 | same file, eth_wsteth_001 |
+| l <= 10 and l <= 50 shares of `eA_fu_capacity_summary.csv` reproduced exactly by the cross-block code | | assertion in `eA_followup2.py` |

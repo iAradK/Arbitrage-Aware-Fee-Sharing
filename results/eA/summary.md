@@ -158,3 +158,64 @@ Most swaps that the block scope pushes over their margin were already below κ u
 ## 4. Manifest
 
 `manifest.json` now has a `provenance` block, and `manifest_followup.json` repeats it with the follow-up's input and output hashes. The block records that the per-correction sizes came from an in-memory re-execution of the frozen, unmodified `simulate()`. That re-execution reproduced every stored total bit for bit: all 10 protection totals with their execution counts, and all 5 rolling ε_S medians, compared with round-trip float parsing.
+
+---
+
+# Follow-up 2 (2026-10-06): splitting under the block-scoped hook, `experiments/eA_followup2.py`
+
+Post-processing of `eA_part1_corrections.csv.gz` and `eA_fu_capacity_corrections.csv.gz`. Nothing was re-simulated and no test-month simulation was run. Output: `eA_fu2_block_scope.csv`. Provenance: `manifest_followup2.json` (git bfa921d+dirty). The dirty files are listed in NOTES/2026-09-30_number_sources.md. The one that matters, `common/fixedpoint.py`, only adds token1 settlement to `ScopedHookReference`, a path the script does not use. Every share in the CSV has an `aggregation` column: **sum-weighted** (sum of charges / sum of F(a)) or **mean of per-correction ratios** (mean of charge / F(a) over corrections with F(a) > 0).
+
+## 1. Within one block: 100% survives
+
+- **Corrections.** Every executed correction of the two E2 rules, for ETH/USDC and ETH/WBTC (raw and offset).
+- **Splits.** Each correction is split into every l = 2..cap_b transactions of one block, with cap_b = 323–324 from the block gas limit. Two families:
+  - (i) Experiment A's transaction-scope optimum: l−1 pieces of κ−1 unit plus the remainder, for every l up to where the remainder is still positive.
+  - (ii) l equal pieces.
+- **Evaluation.** Each piece goes as its own transaction through `ScopedHookReference(scope="block")`, in Experiment A's convention (USD in WAD, piece surplus as a numeraire delta).
+- **Scale.** 4,139,001 splits and 669,617,937 pieces in all.
+- **Cross-check.** The same pieces under `scope="tx"` reproduce Experiment A's charge(l*) exactly for every correction.
+
+| Rule | Pool | n (charged) | Original USD | Surviving, sum-weighted | Surviving, mean of per-correction ratios | Deviation from F(a), WAD units | l* with gas |
+|---|---|---|---|---|---|---|---|
+| Ideal | ETH/USDC | 7,053 (7,053) | 26,322.50 | **100%** | **100%** | 0 (min and max over all splits) | 1 |
+| Ideal | ETH/WBTC raw / offset | 1,247 / 1,039 | 16,245.77 / 15,101.69 | 100% / 100% | 100% / 100% | 0 | 1 |
+| Buffered | ETH/USDC | 2,204 (431) | 19,139.24 | **100%** | **100%** | 0 | 1 |
+| Buffered | ETH/WBTC raw / offset | 639 (108) / 531 (92) | 21,687.08 / 19,283.70 | 100% / 100% | 100% / 100% | 0 | 1 |
+
+- **Shares.** "Surviving" is shown at the split that minimises the block total, with gas ignored. The share at l* with gas is the same.
+- **Exact result.** The block total equals F(a) to the WAD unit (1e-18 USD) for every split. With gas, splitting never pays (l* = 1 for every correction), because the extra transactions and per-piece settlement only add cost.
+- **Not modelled: pool rounding.** The saved files contain surplus, not pool state, so per-swap input rounding is not modelled. The Solidity test of the hook measured 0, 3 and 7 wei less for 2, 4 and 8 transactions (NOTES/2026-10-06_block_scoped_hook.md, section 4).
+
+## 2. Cross-block bracket (constant reference and κ; P4 relaxes this)
+
+One piece per block. With the reference and κ held constant, each block is its own scope and the split is Experiment A's transaction-scope split, capped at l blocks. 5 blocks is about one minute (the replay grid) and 75 blocks about 15 minutes (the k=15 cadence). The rows extend the capacity table of Follow-up 1. The l ≤ 10 and l ≤ 50 columns there are reproduced exactly by this script.
+
+**ETH/USDC (Follow-up 1 columns: sum-weighted only):**
+
+| Rule | Uncapped (SW) | l ≤ 75 blocks: SW / MR | l ≤ 50 (SW) | l ≤ 10 (SW) | l ≤ 5 blocks: SW / MR | l = 2: SW / MR |
+|---|---|---|---|---|---|---|
+| Ideal, retained k=1 d=0 | 3.24% | **14.7% / 6.9%** | 18.3% | 37.4% | **50.3% / 12.4%** | 75.0% / 23.8% |
+| Buffered δ=ε_S k=15 d=1 | 0.04% | **6.5% / 18.1%** | 11.7% | 41.1% | **60.5% / 27.5%** | 84.2% / 24.0% |
+
+SW = sum-weighted, MR = mean of per-correction ratios (l = 2 MR from `eA_fu_aggregation.csv`).
+
+**Other pools, l ≤ 5 blocks / l ≤ 75 blocks:**
+
+| Rule | Pool | SW | MR | Cap binds (n, transfer share) at l ≤ 5 / l ≤ 75 |
+|---|---|---|---|---|
+| Ideal | ETH/WBTC raw | 51.3% / 1.77% | 12.4% / 4.2% | 182, 68.9% / 4, 8.1% |
+| Ideal | ETH/WBTC offset | 51.9% / 1.75% | 13.6% / 4.7% | 165, 70.0% / 3, 7.0% |
+| Buffered | ETH/WBTC raw | 57.7% / 0.002% | 19.4% / 5.6% | 24, 78.3% / 0 |
+| Buffered | ETH/WBTC offset | 61.1% / 0.001% | 19.7% / 5.4% | 21, 83.5% / 0 |
+| Ideal | ETH/wstETH raw / offset | 2.4% / 2.3% (both caps) | 11.1% / 34.4% | 0 |
+| Buffered | ETH/wstETH raw / offset | 1.6% / 3.9% (both caps) | 7.5% / 28.1% | 0 |
+
+ETH/USDC cap binds at l ≤ 5 / l ≤ 75:
+- Ideal: 824 corrections (62.9% of the transfer) / 19 (19.1%).
+- Buffered: 70 (79.8%) / 3 (19.7%).
+
+**Reading.**
+- **Within a block.** Splitting gains nothing under the block scope.
+- **Across blocks, at a constant reference.** An arbitrager willing to spread a correction over 5 blocks still pays about half the transfer, sum-weighted (50% ideal, 61% buffered, ETH/USDC). Over 75 blocks it pays 15% (ideal) and 6.5% (buffered).
+- **Aggregation matters.** A typical correction keeps much less: 12% / 27% at 5 blocks, 7% / 18% at 75 blocks. Most of the money sits in large corrections, which hit the cap.
+- **Caveat.** These are brackets. They ignore re-locking of the reference and κ in each block and the price moving between blocks, and they assume the remaining deviation waits.

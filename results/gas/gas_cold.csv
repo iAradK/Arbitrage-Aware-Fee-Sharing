@@ -1,0 +1,37 @@
+hook,scenario,description,gas_with_hook,gas_no_hook,overhead_gas,extra_tx_gas,extra_tx_usd_median,usd_per_gas_median,contracts_commit
+block_scoped,first_ever,"first swap the pool ever sees (hook slots and pool fee growth zero -> nonzero), no charge",217619,131760,85859,238619.0,0.130028,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,new_block,"first swap of a block, earlier block had a scope, oracle price moved, no charge",134595,100036,34559,155595.0,0.084787,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,second_tx,"first swap of a 2nd transaction in the same block, no charge",118643,100036,18607,139643.0,0.076094,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,first_in_multi_tx,"1st swap of a two-swap transaction in a new block, no charge",134717,100158,34559,155717.0,0.084853,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,second_in_tx,"2nd swap of that transaction, no charge",62630,55323,7307,,,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,charged,"new_block with a positive settled charge, vault already holds the token",148213,100036,48177,169213.0,0.092208,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,charged_vault_empty,"new_block with a positive settled charge, vault holds none of the token (balance 0 -> nonzero)",165313,100036,65277,186313.0,0.101526,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,charged_second_tx,"charged first swap of a 2nd transaction in the same block, vault holds the token",135165,100036,35129,156165.0,0.085098,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,charged_first_ever,"first swap the pool ever sees, charged, vault empty (conditions of HookGasSettled)",248337,131760,116577,269337.0,0.146767,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,invalid,"new_block with a stale oracle: no scope, charge 0",120130,100036,20094,141130.0,0.076905,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,invalid_first_in_multi_tx,"1st swap of a two-swap transaction, stale oracle",120252,100158,20094,141252.0,0.076971,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+block_scoped,invalid_second_in_tx,"2nd swap of that transaction, stale oracle",62417,55323,7094,,,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,first_ever,"first swap the pool ever sees (hook slots and pool fee growth zero -> nonzero), no charge",161974,131760,30214,182974.0,0.099706,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,new_block,"first swap of a block, earlier block had a scope, oracle price moved, no charge",130250,100036,30214,151250.0,0.082419,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,second_tx,"first swap of a 2nd transaction in the same block, no charge",130250,100036,30214,151250.0,0.082419,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,first_in_multi_tx,"1st swap of a two-swap transaction in a new block, no charge",130372,100158,30214,151372.0,0.082486,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,second_in_tx,"2nd swap of that transaction, no charge",69146,55323,13823,,,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,charged,"new_block with a positive settled charge, vault already holds the token",144743,100036,44707,165743.0,0.090317,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,charged_vault_empty,"new_block with a positive settled charge, vault holds none of the token (balance 0 -> nonzero)",161843,100036,61807,182843.0,0.099635,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,charged_second_tx,"charged first swap of a 2nd transaction in the same block, vault holds the token",144743,100036,44707,165743.0,0.090317,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,charged_first_ever,"first swap the pool ever sees, charged, vault empty (conditions of HookGasSettled)",193567,131760,61807,214567.0,0.116922,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,invalid,"new_block with a stale oracle: no scope, charge 0",123285,100036,23249,144285.0,0.078624,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,invalid_first_in_multi_tx,"1st swap of a two-swap transaction, stale oracle",123407,100158,23249,144407.0,0.07869,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+tx_scoped,invalid_second_in_tx,"2nd swap of that transaction, stale oracle",61101,55323,5778,,,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,first_ever,"first swap the pool ever sees (hook slots and pool fee growth zero -> nonzero), no charge",131760,131760,0,152760.0,0.083242,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,new_block,"first swap of a block, earlier block had a scope, oracle price moved, no charge",100036,100036,0,121036.0,0.065955,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,second_tx,"first swap of a 2nd transaction in the same block, no charge",100036,100036,0,121036.0,0.065955,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,first_in_multi_tx,"1st swap of a two-swap transaction in a new block, no charge",100158,100158,0,121158.0,0.066021,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,second_in_tx,"2nd swap of that transaction, no charge",55323,55323,0,,,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,charged,"new_block with a positive settled charge, vault already holds the token",100036,100036,0,121036.0,0.065955,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,charged_vault_empty,"new_block with a positive settled charge, vault holds none of the token (balance 0 -> nonzero)",100036,100036,0,121036.0,0.065955,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,charged_second_tx,"charged first swap of a 2nd transaction in the same block, vault holds the token",100036,100036,0,121036.0,0.065955,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,charged_first_ever,"first swap the pool ever sees, charged, vault empty (conditions of HookGasSettled)",131760,131760,0,152760.0,0.083242,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,invalid,"new_block with a stale oracle: no scope, charge 0",100036,100036,0,121036.0,0.065955,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,invalid_first_in_multi_tx,"1st swap of a two-swap transaction, stale oracle",100158,100158,0,121158.0,0.066021,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a
+no_hook,invalid_second_in_tx,"2nd swap of that transaction, stale oracle",55323,55323,0,,,5.449205675565401e-07,ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a

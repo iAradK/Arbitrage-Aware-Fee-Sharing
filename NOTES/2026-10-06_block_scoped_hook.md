@@ -50,6 +50,11 @@ Rules:
 
 ## 3. Callback layout: gas of both variants
 
+> Superseded for the block-scoped figures: `results/gas/gas_cold.csv` and `results/gas/README.md`.
+> The measurement below kept the oracle price fixed between blocks. That understated the
+> block-scoped new-block and charged overheads by 2,800 gas: they are 34,559 and 48,177. The
+> comparison between the two callback layouts is unaffected, since both had the same bias.
+
 Gas is measured inside the transaction around the router call (`forge test --isolate`; every
 call is a cold transaction). Overhead is the swap with the hook minus the identical swap
 without one. Uncharged swaps use a reference of 1.0; the charged swap uses 1.2, with a

@@ -19,11 +19,19 @@ import {MockOracle} from "../../src/mocks/MockOracle.sol";
 ///
 /// Scenarios (W = watermark, A/B/C = the hook's slots):
 ///   first_ever    first swap the pool ever sees (A, B, C go from zero to nonzero)
-///   new_block     first swap of a block after a scope in an earlier block (steady state)
+///   new_block     first swap of a block after a scope in an earlier block (steady state;
+///                 the oracle price moves between the blocks, as on chain)
 ///   second_tx     first swap of a second transaction in the same block
 ///   second_in_tx  second swap of one transaction (first opened the block's scope)
 ///   charged       new_block with a positive, settled charge (vault balance nonzero)
+///   charged_vault_empty   as charged, but the vault holds none of the charged token yet,
+///                 so its ERC-6909 balance goes from zero to nonzero (earlier block uncharged)
+///   charged_second_tx     charged first swap of a second transaction in the same block
+///   charged_first_ever    first swap the pool ever sees, charged, vault empty: the conditions
+///                 of HookGasSettled (the paper's 61,807)
 ///   invalid       new_block with a stale oracle (no scope opens, charge 0)
+///   invalid_second_in_tx  second swap of one transaction with a stale oracle: the
+///                 transaction-scoped hook has disabled the pool, the block-scoped one retries
 contract BlockScopedHookGasTest is BlockScopedHookTestBase {
     using PoolIdLibrary for PoolKey;
 
@@ -62,6 +70,15 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
         vm.snapshotValue("blockScopedHookGas", name, gas_);
     }
 
+    /// @dev Moves the oracle price slightly before a measured new-block swap. On chain the
+    /// reference (and the base fee, hence kappa) changes from block to block, so the
+    /// opening swap rewrites slot C with a new value; with an unchanged price the rewrite
+    /// would cost 100 gas instead of 2,900 and understate the block-scoped hook. Applied to
+    /// both hooks; the transaction-scoped one is unaffected.
+    function _nudge(uint256 v, PoolKey memory key, uint256 priceWad) internal {
+        if (v != NO_HOOK) oracle.setPrice(PoolId.unwrap(key.toId()), priceWad);
+    }
+
     function _firstEver(uint256 v) internal {
         _assertIsolated();
         _record(v, "first_ever", _one(uncharged[v], SMALL));
@@ -71,6 +88,7 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
         _assertIsolated();
         _one(uncharged[v], SMALL);
         vm.roll(block.number + 1);
+        _nudge(v, uncharged[v], 1.0001e18);
         _record(v, "new_block", _one(uncharged[v], SMALL));
     }
 
@@ -84,6 +102,7 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
         _assertIsolated();
         _one(uncharged[v], SMALL);
         vm.roll(block.number + 1);
+        _nudge(v, uncharged[v], 1.0001e18);
         IPoolManager.SwapParams[] memory ps = new IPoolManager.SwapParams[](2);
         ps[0] = _exactIn(true, SMALL);
         ps[1] = _exactIn(true, SMALL);
@@ -96,6 +115,7 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
         _assertIsolated();
         _one(charged[v], CHARGED);
         vm.roll(block.number + 1);
+        _nudge(v, charged[v], 1.2001e18);
         uint256 before = _vault(currency1);
         uint256 used = _one(charged[v], CHARGED);
         if (v != NO_HOOK) require(_vault(currency1) > before, "the measured swap must be charged");
@@ -109,6 +129,61 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
         vm.roll(block.number + 1);
         _record(v, "invalid", _one(uncharged[v], SMALL));
     }
+
+    function _chargedVaultEmpty(uint256 v) internal {
+        _assertIsolated();
+        bytes32 id = PoolId.unwrap(charged[v].toId());
+        if (v != NO_HOOK) oracle.setPrice(id, 1e18); // the earlier block is uncharged
+        _one(charged[v], CHARGED);
+        if (v != NO_HOOK) oracle.setPrice(id, 1.2e18);
+        vm.roll(block.number + 1);
+        require(_vault(currency1) == 0, "vault must start empty");
+        uint256 used = _one(charged[v], CHARGED);
+        if (v != NO_HOOK) require(_vault(currency1) > 0, "the measured swap must be charged");
+        _record(v, "charged_vault_empty", used);
+    }
+
+    function _chargedSecondTx(uint256 v) internal {
+        _assertIsolated();
+        _one(charged[v], CHARGED);
+        uint256 before = _vault(currency1);
+        uint256 used = _one(charged[v], CHARGED);
+        if (v != NO_HOOK) require(_vault(currency1) > before, "the measured swap must be charged");
+        _record(v, "charged_second_tx", used);
+    }
+
+    function _chargedFirstEver(uint256 v) internal {
+        _assertIsolated();
+        uint256 used = _one(charged[v], CHARGED);
+        if (v != NO_HOOK) require(_vault(currency1) > 0, "the measured swap must be charged");
+        _record(v, "charged_first_ever", used);
+    }
+
+    function _invalidSecondInTx(uint256 v) internal {
+        _assertIsolated();
+        _one(uncharged[v], SMALL);
+        if (v != NO_HOOK) oracle.setMode(PoolId.unwrap(uncharged[v].toId()), MockOracle.Mode.ForceStale);
+        vm.roll(block.number + 1);
+        IPoolManager.SwapParams[] memory ps = new IPoolManager.SwapParams[](2);
+        ps[0] = _exactIn(true, SMALL);
+        ps[1] = _exactIn(true, SMALL);
+        uint256[] memory used = probe.swapMany(uncharged[v], ps);
+        _record(v, "invalid_first_in_multi_tx", used[0]);
+        _record(v, "invalid_second_in_tx", used[1]);
+    }
+
+    function test_block_scoped_charged_vault_empty() public { _chargedVaultEmpty(0); }
+    function test_block_scoped_charged_second_tx() public { _chargedSecondTx(0); }
+    function test_block_scoped_charged_first_ever() public { _chargedFirstEver(0); }
+    function test_block_scoped_invalid_second_in_tx() public { _invalidSecondInTx(0); }
+    function test_tx_scoped_charged_vault_empty() public { _chargedVaultEmpty(1); }
+    function test_tx_scoped_charged_second_tx() public { _chargedSecondTx(1); }
+    function test_tx_scoped_charged_first_ever() public { _chargedFirstEver(1); }
+    function test_tx_scoped_invalid_second_in_tx() public { _invalidSecondInTx(1); }
+    function test_no_hook_charged_vault_empty() public { _chargedVaultEmpty(2); }
+    function test_no_hook_charged_second_tx() public { _chargedSecondTx(2); }
+    function test_no_hook_charged_first_ever() public { _chargedFirstEver(2); }
+    function test_no_hook_invalid_second_in_tx() public { _invalidSecondInTx(2); }
 
     function test_block_scoped_first_ever() public { _firstEver(0); }
     function test_block_scoped_new_block() public { _newBlock(0); }

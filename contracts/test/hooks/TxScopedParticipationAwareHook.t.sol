@@ -10,19 +10,19 @@ import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 
 import {HookTestBase} from "./HookTestBase.sol";
 import {HookMiner} from "../utils/HookMiner.sol";
-import {ParticipationAwareHook} from "../../src/hooks/ParticipationAwareHook.sol";
+import {TxScopedParticipationAwareHook} from "../../src/hooks/TxScopedParticipationAwareHook.sol";
 import {CumulativeSurplusAccountingLib} from "../../src/CumulativeSurplusAccountingLib.sol";
 import {SurplusSharingAccounting} from "../../src/SurplusSharingAccounting.sol";
 import {MockOracle} from "../../src/mocks/MockOracle.sol";
 
-/// @notice Fuzz coverage for ParticipationAwareHook through real PoolManager swaps:
+/// @notice Fuzz coverage for TxScopedParticipationAwareHook through real PoolManager swaps:
 /// boundary economic parameters, tick-crossing behavior, invalid oracle states, and
 /// cross-pool isolation. See the plan's invariant-fuzzing caveat (not repeated as
 /// cross-call invariants here): the watermark lives in transient storage scoped to a
 /// single transaction, so multi-swap monotonicity is checked with an internal
 /// multi-swap loop inside one test function/transaction, not a Foundry invariant
 /// handler (whose calls are separate top-level transactions).
-contract ParticipationAwareHookTest is HookTestBase {
+contract TxScopedParticipationAwareHookTest is HookTestBase {
     function setUp() public {
         setUpHook();
     }
@@ -31,11 +31,11 @@ contract ParticipationAwareHookTest is HookTestBase {
     /// from that swap's own zeroForOne flag: zeroForOne => +1, oneForZero => -1.
     function test_DirectionMapping_MatchesZeroForOneFlag() public {
         _swapExactIn(poolA, true, 1e18);
-        ParticipationAwareHook.TransientState memory stateA = hook.getTransientState(bytes32(PoolId.unwrap(poolAId)));
+        TxScopedParticipationAwareHook.TransientState memory stateA = hook.getTransientState(bytes32(PoolId.unwrap(poolAId)));
         assertEq(stateA.initialDirection, int8(1));
 
         _swapExactIn(poolB, false, 1e18);
-        ParticipationAwareHook.TransientState memory stateB = hook.getTransientState(bytes32(PoolId.unwrap(poolBId)));
+        TxScopedParticipationAwareHook.TransientState memory stateB = hook.getTransientState(bytes32(PoolId.unwrap(poolBId)));
         assertEq(stateB.initialDirection, int8(-1));
     }
 
@@ -56,13 +56,13 @@ contract ParticipationAwareHookTest is HookTestBase {
         deltaWad = bound(deltaWad, 0, 1e24);
         swapAmount = bound(swapAmount, 1e6, 1e21);
 
-        (ParticipationAwareHook customHook, PoolKey memory key, PoolId id) =
+        (TxScopedParticipationAwareHook customHook, PoolKey memory key, PoolId id) =
             _deployCustomHookAndPool(executionMarginHatWad, lambdaWad, gammaWad, deltaWad);
 
         oracle.setPrice(bytes32(PoolId.unwrap(id)), 1e18);
         _swapExactInOn(key, true, swapAmount);
 
-        ParticipationAwareHook.TransientState memory state = customHook.getTransientState(bytes32(PoolId.unwrap(id)));
+        TxScopedParticipationAwareHook.TransientState memory state = customHook.getTransientState(bytes32(PoolId.unwrap(id)));
 
         (, int256 value0) =
             CumulativeSurplusAccountingLib.tryMulSignedWad(state.cumulativeDelta0Wad, state.referencePrice0Wad);
@@ -86,14 +86,14 @@ contract ParticipationAwareHookTest is HookTestBase {
 
         bytes memory args =
             abi.encode(manager, oracle, VAULT, uint256(0), lambdaWad, gammaWad, uint256(0), STALENESS_THRESHOLD_SECONDS);
-        (, bytes32 salt) = HookMiner.find(address(this), HOOK_FLAGS, type(ParticipationAwareHook).creationCode, args);
+        (, bytes32 salt) = HookMiner.find(address(this), HOOK_FLAGS, type(TxScopedParticipationAwareHook).creationCode, args);
 
         if (lambdaWad > 1e18) {
             vm.expectRevert(SurplusSharingAccounting.InvalidLambda.selector);
         } else {
             vm.expectRevert(SurplusSharingAccounting.InvalidGamma.selector);
         }
-        new ParticipationAwareHook{salt: salt}(manager, oracle, VAULT, 0, lambdaWad, gammaWad, 0, STALENESS_THRESHOLD_SECONDS);
+        new TxScopedParticipationAwareHook{salt: salt}(manager, oracle, VAULT, 0, lambdaWad, gammaWad, 0, STALENESS_THRESHOLD_SECONDS);
     }
 
     /// @dev Sequential same-direction swap fragments within one transaction: the
@@ -107,7 +107,7 @@ contract ParticipationAwareHookTest is HookTestBase {
         for (uint256 i = 0; i < fragmentCount; i++) {
             uint256 amount = bound(uint256(keccak256(abi.encode(fragmentSeed, i))), 1e6, 5e20);
             _swapExactIn(poolA, true, amount);
-            ParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
+            TxScopedParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
             assertGe(state.watermark, previousWatermark, "watermark must be non-decreasing across fragments");
             previousWatermark = state.watermark;
         }
@@ -128,7 +128,7 @@ contract ParticipationAwareHookTest is HookTestBase {
         oracle.setMode(poolIdBytes, mode);
         _swapExactIn(poolA, zeroForOne, swapAmount);
 
-        ParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
+        TxScopedParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
         assertEq(state.status, CumulativeSurplusAccountingLib.STATUS_DISABLED);
         assertEq(state.watermark, 0);
     }
@@ -140,12 +140,12 @@ contract ParticipationAwareHookTest is HookTestBase {
         amountB = bound(amountB, 1e6, 5e20);
 
         _swapExactIn(poolA, true, amountA);
-        ParticipationAwareHook.TransientState memory stateAAfterFirst =
+        TxScopedParticipationAwareHook.TransientState memory stateAAfterFirst =
             hook.getTransientState(bytes32(PoolId.unwrap(poolAId)));
 
         _swapExactIn(poolB, false, amountB);
 
-        ParticipationAwareHook.TransientState memory stateAAfterSecond =
+        TxScopedParticipationAwareHook.TransientState memory stateAAfterSecond =
             hook.getTransientState(bytes32(PoolId.unwrap(poolAId)));
 
         assertEq(stateAAfterSecond.cumulativeDelta0Wad, stateAAfterFirst.cumulativeDelta0Wad);
@@ -153,7 +153,7 @@ contract ParticipationAwareHookTest is HookTestBase {
         assertEq(stateAAfterSecond.watermark, stateAAfterFirst.watermark);
         assertEq(stateAAfterSecond.initialDirection, int8(1));
 
-        ParticipationAwareHook.TransientState memory stateB = hook.getTransientState(bytes32(PoolId.unwrap(poolBId)));
+        TxScopedParticipationAwareHook.TransientState memory stateB = hook.getTransientState(bytes32(PoolId.unwrap(poolBId)));
         assertEq(stateB.initialDirection, int8(-1));
     }
 
@@ -166,7 +166,7 @@ contract ParticipationAwareHookTest is HookTestBase {
         oracle.setPrice(poolIdBytes, 1.2e18);
 
         BalanceDelta swapperDelta = _swapExactIn(poolA, true, 100e18);
-        ParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
+        TxScopedParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
 
         uint256 surplus = _surplus(state);
         (uint256 target,) = hook.computeTransfer(surplus, EXECUTION_MARGIN_HAT_WAD, LAMBDA_WAD, GAMMA_WAD, DELTA_WAD);
@@ -188,7 +188,7 @@ contract ParticipationAwareHookTest is HookTestBase {
         oracle.setPrice(poolIdBytes, 1.2e18);
 
         BalanceDelta swapperDelta = _swapExactOut(poolA, true, 100e18);
-        ParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
+        TxScopedParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
 
         (uint256 target,) =
             hook.computeTransfer(_surplus(state), EXECUTION_MARGIN_HAT_WAD, LAMBDA_WAD, GAMMA_WAD, DELTA_WAD);
@@ -212,7 +212,7 @@ contract ParticipationAwareHookTest is HookTestBase {
         for (uint256 i = 0; i < fragmentCount; i++) {
             _swapExactIn(poolA, true, 100e18 / fragmentCount);
         }
-        ParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
+        TxScopedParticipationAwareHook.TransientState memory state = hook.getTransientState(poolIdBytes);
         (uint256 target,) =
             hook.computeTransfer(_surplus(state), EXECUTION_MARGIN_HAT_WAD, LAMBDA_WAD, GAMMA_WAD, DELTA_WAD);
 
@@ -222,7 +222,7 @@ contract ParticipationAwareHookTest is HookTestBase {
         assertLe(state.watermark, target, "watermark within cumulative target");
     }
 
-    function _surplus(ParticipationAwareHook.TransientState memory state) private pure returns (uint256) {
+    function _surplus(TxScopedParticipationAwareHook.TransientState memory state) private pure returns (uint256) {
         (, int256 value0) =
             CumulativeSurplusAccountingLib.tryMulSignedWad(state.cumulativeDelta0Wad, state.referencePrice0Wad);
         (, int256 value1) =
@@ -247,12 +247,12 @@ contract ParticipationAwareHookTest is HookTestBase {
         uint256 lambdaWad,
         uint256 gammaWad,
         uint256 deltaWad
-    ) private returns (ParticipationAwareHook customHook, PoolKey memory key, PoolId id) {
+    ) private returns (TxScopedParticipationAwareHook customHook, PoolKey memory key, PoolId id) {
         bytes memory args =
             abi.encode(manager, oracle, VAULT, executionMarginHatWad, lambdaWad, gammaWad, deltaWad, STALENESS_THRESHOLD_SECONDS);
         (address minedAddress, bytes32 salt) =
-            HookMiner.find(address(this), HOOK_FLAGS, type(ParticipationAwareHook).creationCode, args);
-        customHook = new ParticipationAwareHook{salt: salt}(
+            HookMiner.find(address(this), HOOK_FLAGS, type(TxScopedParticipationAwareHook).creationCode, args);
+        customHook = new TxScopedParticipationAwareHook{salt: salt}(
             manager, oracle, VAULT, executionMarginHatWad, lambdaWad, gammaWad, deltaWad, STALENESS_THRESHOLD_SECONDS
         );
         require(address(customHook) == minedAddress, "mined address mismatch");

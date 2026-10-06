@@ -9,7 +9,7 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 
 import {HookTestBase} from "./HookTestBase.sol";
-import {ParticipationAwareHook} from "../../src/hooks/ParticipationAwareHook.sol";
+import {TxScopedParticipationAwareHook} from "../../src/hooks/TxScopedParticipationAwareHook.sol";
 import {MockOracle} from "../../src/mocks/MockOracle.sol";
 
 /// @notice Full-lifecycle hook gas benchmark: measures gasleft() around the entire
@@ -101,7 +101,7 @@ contract HookGasBenchmarkTest is HookTestBase {
 
             (uint256 gasWithoutHook, bool revertedBaseline) = _timedSwap(baseKey, true, fragmentAmount);
 
-            ParticipationAwareHook.TransientState memory state = hook.getTransientState(hookPoolIdBytes);
+            TxScopedParticipationAwareHook.TransientState memory state = hook.getTransientState(hookPoolIdBytes);
             uint256 surplus = _surplus(state);
             (uint256 cumulativeTarget, bool capBinds) =
                 hook.computeTransfer(surplus, state.executionMarginHat, state.lambdaWad, state.gammaWad, state.delta);
@@ -130,7 +130,7 @@ contract HookGasBenchmarkTest is HookTestBase {
     /// does internally, from the transient cumulative deltas and reference prices
     /// exposed via getTransientState (the library itself only exposes this value
     /// transiently mid-accumulate(), not as a standalone view).
-    function _surplus(ParticipationAwareHook.TransientState memory state) private pure returns (uint256) {
+    function _surplus(TxScopedParticipationAwareHook.TransientState memory state) private pure returns (uint256) {
         int256 value0 = (state.cumulativeDelta0Wad * int256(state.referencePrice0Wad)) / 1e18;
         int256 value1 = (state.cumulativeDelta1Wad * int256(state.referencePrice1Wad)) / 1e18;
         int256 total = value0 + value1;

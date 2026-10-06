@@ -12,11 +12,11 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 
 import {HookMiner} from "../utils/HookMiner.sol";
-import {ParticipationAwareHook} from "../../src/hooks/ParticipationAwareHook.sol";
+import {TxScopedParticipationAwareHook} from "../../src/hooks/TxScopedParticipationAwareHook.sol";
 import {MockOracle} from "../../src/mocks/MockOracle.sol";
 
 /// @notice Shared fixture deploying a real PoolManager, a real mined
-/// ParticipationAwareHook, and two discrete-tick-range liquidity pools sharing the
+/// TxScopedParticipationAwareHook, and two discrete-tick-range liquidity pools sharing the
 /// same hook instance (used for the cross-pool isolation fuzz test). Liquidity is
 /// seeded across several narrow, non-overlapping tick ranges rather than one
 /// full-range position, so ordinary-sized swaps actually cross ticks.
@@ -27,7 +27,7 @@ abstract contract HookTestBase is Deployers {
         uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG);
 
     MockOracle internal oracle;
-    ParticipationAwareHook internal hook;
+    TxScopedParticipationAwareHook internal hook;
 
     PoolKey internal poolA;
     PoolId internal poolAId;
@@ -58,9 +58,9 @@ abstract contract HookTestBase is Deployers {
             STALENESS_THRESHOLD_SECONDS
         );
         (address minedAddress, bytes32 salt) = HookMiner.find(
-            address(this), HOOK_FLAGS, type(ParticipationAwareHook).creationCode, constructorArgs
+            address(this), HOOK_FLAGS, type(TxScopedParticipationAwareHook).creationCode, constructorArgs
         );
-        hook = new ParticipationAwareHook{salt: salt}(
+        hook = new TxScopedParticipationAwareHook{salt: salt}(
             manager, oracle, VAULT, EXECUTION_MARGIN_HAT_WAD, LAMBDA_WAD, GAMMA_WAD, DELTA_WAD, STALENESS_THRESHOLD_SECONDS
         );
         require(address(hook) == minedAddress, "HookTestBase: hook address mismatch");

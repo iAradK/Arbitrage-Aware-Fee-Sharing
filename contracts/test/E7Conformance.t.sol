@@ -5,6 +5,25 @@ import "forge-std/Test.sol";
 import {SurplusSharingAccounting} from "../src/SurplusSharingAccounting.sol";
 import {CumulativeSurplusAccounting} from "../src/CumulativeSurplusAccounting.sol";
 
+/// @dev Runs one transaction-scoped sequence (initialize, then every fragment) inside a
+/// single call, so the sequence shares one transaction also under `forge test --isolate`.
+contract E7SequenceRunner {
+    function run(
+        CumulativeSurplusAccounting cum,
+        bytes32 poolId,
+        uint256[4] calldata kLambdaGammaDelta,
+        int256[] calldata deltas
+    ) external returns (uint256[] memory charges) {
+        cum.initializePool(
+            poolId, 1e18, 1e18, kLambdaGammaDelta[0], kLambdaGammaDelta[1], kLambdaGammaDelta[2], kLambdaGammaDelta[3], 1
+        );
+        charges = new uint256[](deltas.length);
+        for (uint256 j; j < deltas.length; ++j) {
+            (,, charges[j]) = cum.processCallback(poolId, deltas[j], 0);
+        }
+    }
+}
+
 /// @notice E7 conformance: asserts EXACT equality between the contracts and the Python integer reference
 /// (results/e7/vectors.json), counts outcome classes, and records computeTransfer / callback gas.
 contract E7ConformanceTest is Test {
@@ -12,10 +31,12 @@ contract E7ConformanceTest is Test {
 
     SurplusSharingAccounting internal core;
     CumulativeSurplusAccounting internal cum;
+    E7SequenceRunner internal runner;
 
     function setUp() public {
         core = new SurplusSharingAccounting();
         cum = new CumulativeSurplusAccounting();
+        runner = new E7SequenceRunner();
     }
 
     function _u(string memory json, string memory key) internal view returns (uint256) {
@@ -74,19 +95,21 @@ contract E7ConformanceTest is Test {
         for (uint256 i; i < nS; ++i) {
             string memory p = string.concat(".sequences[", vm.toString(i), "].");
             bytes32 poolId = keccak256(abi.encode("e7-seq", i));
-            cum.initializePool(
-                poolId, WAD, WAD,
+            uint256[4] memory params = [
                 _u(json, string.concat(p, "k_hat_wad")),
                 _u(json, string.concat(p, "lambda_wad")),
                 _u(json, string.concat(p, "gamma_wad")),
-                _u(json, string.concat(p, "delta_wad")),
-                1
-            );
-            string[] memory deltas = vm.parseJsonStringArray(json, string.concat(p, "deltas"));
+                _u(json, string.concat(p, "delta_wad"))
+            ];
+            string[] memory deltaStrings = vm.parseJsonStringArray(json, string.concat(p, "deltas"));
             string[] memory exp = vm.parseJsonStringArray(json, string.concat(p, "expected_charges"));
+            int256[] memory deltas = new int256[](deltaStrings.length);
             for (uint256 j; j < deltas.length; ++j) {
-                (, , uint256 charge) = cum.processCallback(poolId, vm.parseInt(deltas[j]), 0);
-                if (charge != vm.parseUint(exp[j])) ++seqMismatch;
+                deltas[j] = vm.parseInt(deltaStrings[j]);
+            }
+            uint256[] memory charges = runner.run(cum, poolId, params, deltas);
+            for (uint256 j; j < deltas.length; ++j) {
+                if (charges[j] != vm.parseUint(exp[j])) ++seqMismatch;
                 ++seqFragments;
             }
         }

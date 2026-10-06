@@ -170,3 +170,43 @@ After these passed:
     Across blocks, (1 - gamma) kappa per additional block remains.
   - The scope paragraph: batching by a router now merges a whole block, not one transaction.
   - The gas numbers in Section 5.
+
+## 7. Is the overflow fail-safe reachable? (2026-10-06)
+
+Not with USDC, WETH, WBTC or wstETH. It is reachable only with tokens or prices far outside this study.
+
+**Cumulative deltas (int128).** v4 already caps each swap's delta at int128. The hook's cumulative delta for one pool in one block is a net flow. Moving more than a token's supply would require tokens that do not exist: the pool cannot pay out more than it holds, and every unlock must settle in real tokens. Generous supply bounds, in base units:
+
+| Token | Supply bound | Base units |
+|---|---|---|
+| USDC | 1e12 USDC | 1e18 |
+| WETH, wstETH | below the ETH supply, 1.3e8 ETH | 1.3e26 |
+| WBTC | 2.1e7 BTC cap | 2.1e15 |
+
+The largest bound, 1.3e26, is 1.3e12 times below int128's 1.70e38.
+
+**Target (uint128).** The target is at most the surplus, which is at most the token0 value of both supplies. With native ETH as token0 (wei):
+
+- USDC supply at an ETH price of at least 100 USD: at most 1e28 wei.
+- WBTC supply at a BTC/ETH ratio of at most 100: at most 2.1e27 wei.
+
+So the target stays below about 1e28, 3.4e10 times below uint128's 3.40e38. With USDC as token0 the bound is smaller still: the ETH supply at 1e5 USD is 1.3e19 base units.
+
+**Settlement amount (int128).** The settlement amount is the same charge expressed in the other token's base units. For example, 1e28 wei is at most 1e21 USDC base units, below int128 by more than 1e17.
+
+**Reference price (uint128).** The 128-bit reference holds 1e30/P_USD for ETH/USDC (1e30 at P = 1 USD), and the BTC/ETH ratio times 1e28 for ETH/WBTC. It would exceed 2^128 only if the ratio passed 3.4e10. A price that large is rejected as invalid (fail open) and never overflows.
+
+The fail-safe therefore guards against other tokens, for example an 18-decimal token with more than 1.7e20 whole tokens. In these pools it is unreachable by at least 10 orders of magnitude, so `BlockScopeBoundary` drives it through `DeltaManager` with synthetic deltas.
+
+## 8. Block-scope conformance suites (2026-10-06)
+
+| Suite | What it checks | How to run |
+|---|---|---|
+| `BlockScopeConformanceTest` | The 48 E7 sequences (validation months) in three modes: one transaction; one transaction per fragment in one block; 2-4 blocks. Each marginal charge is compared with `ScopedHookReference` (`experiments/e7_block_scope_vectors.py` writes `results/e7_block_scope/vectors.json`). | `--isolate` (asserted) |
+| `BlockScopeFuzzTest` | 2,000 runs of real swaps from up to 8 senders, both directions, exact input and output, 1-4 blocks, with oracle updates between and within blocks and invalid-then-valid oracles. Each watermark increase and settled amount must equal the reference's, via `experiments/block_scope_ffi.py`. | `--ffi`; run once with `--isolate` (separate transactions, base fee 0) and once without (base fee changes every block) |
+| `BlockScopeBoundaryTest` | New block, mid-block oracle update, invalid oracle (retry), the three overflow triggers. | Either mode |
+| `BlockScopeBoundaryBaseFeeTest` | Re-lock of kappa at a new base fee. | Without `--isolate` (asserted): isolated calls see base fee 0 |
+
+`ScopedHookReference` now models settlement in token1: W advances by the collected value, rounded up, and the remainder stays owed. It also models the int128 limit of the settlement amount.
+
+Pitfall: with `via_ir`, a `block.number` cached in a local can be re-read after `vm.roll`, because the optimizer treats `NUMBER` as constant within a transaction. Tests use `vm.getBlockNumber()` instead.

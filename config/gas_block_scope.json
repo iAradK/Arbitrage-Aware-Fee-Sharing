@@ -1,0 +1,15 @@
+{
+  "description": "Gas of one transaction in a new block with the block-scoped ParticipationAwareHook: the cost of each additional block's transaction in a cross-block split (experiments/eB_cross_block_split.py).",
+  "source": "results/gas/gas_cold.csv, rows hook=block_scoped (experiments/gas_cold_table.py, forge test --isolate on contracts commit ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a); every swap cold, its own transaction",
+  "intrinsic_gas": 21000,
+  "swap_gas_no_hook": 100036,
+  "hook_overhead_new_block_uncharged": 34559,
+  "hook_overhead_new_block_charged": 48177,
+  "extra_tx_gas_uncharged": 155595,
+  "extra_tx_gas_charged": 169213,
+  "notes": {
+    "extra_tx_gas_uncharged": "21,000 + 100,036 + 34,559 (gas_cold.csv block_scoped new_block extra_tx_gas): first swap of a block, earlier block had a scope, oracle price moved, no charge",
+    "extra_tx_gas_charged": "21,000 + 100,036 + 48,177 (gas_cold.csv block_scoped charged extra_tx_gas): the same with a positive settled charge, vault already holds the token",
+    "not_used": "charged_vault_empty (65,277) and first_ever (85,859) apply once per vault/token or pool, not per block"
+  }
+}

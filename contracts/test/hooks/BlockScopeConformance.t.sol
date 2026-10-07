@@ -22,12 +22,14 @@ import {TransientProbe} from "./BlockScopedHookTestBase.sol";
 ///   a  all fragments in one transaction
 ///   b  each fragment its own transaction, one block
 ///   c  each fragment its own transaction, 2-4 blocks (vm.roll)
-/// Run with `forge test --isolate` (asserted). Writes results/e7_block_scope/conformance_counts_v1.json.
+/// Run with `forge test --isolate` (asserted). Writes conformance_counts_v1.json into $BLOCK_SCOPE_OUT
+/// when an experiment script sets it (e.g. ../results/e7_block_scope), else into the gitignored
+/// scratch directory cache/scratch/e7_block_scope, so a plain test run never overwrites a result.
 contract BlockScopeConformanceTest is Test {
     using PoolIdLibrary for PoolKey;
 
     string internal constant VECTORS = "../results/e7_block_scope/vectors_v1.json";
-    string internal constant COUNTS = "../results/e7_block_scope/conformance_counts_v1.json";
+    string internal constant SCRATCH = "cache/scratch/e7_block_scope";
     address internal constant VAULT = address(0x7A017);
 
     DeltaManager internal mgr;
@@ -156,7 +158,9 @@ contract BlockScopeConformanceTest is Test {
         vm.serializeUint(o, "mismatch_a_one_tx", mismatch[0]);
         vm.serializeUint(o, "mismatch_b_tx_per_fragment", mismatch[1]);
         string memory out = vm.serializeUint(o, "mismatch_c_multi_block", mismatch[2]);
-        vm.writeJson(out, COUNTS);
+        string memory dir = vm.envOr("BLOCK_SCOPE_OUT", string(SCRATCH));
+        vm.createDir(dir, true);
+        vm.writeJson(out, string.concat(dir, "/conformance_counts_v1.json"));
         console.log("fragments per mode", fragments);
         console.log("mismatches a/b/c", mismatch[0], mismatch[1], mismatch[2]);
         console.log("charged a/b/c", charged[0], charged[1], charged[2]);

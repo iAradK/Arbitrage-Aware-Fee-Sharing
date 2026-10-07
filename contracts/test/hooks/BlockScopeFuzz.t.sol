@@ -25,7 +25,9 @@ import {MockOracle} from "../../src/mocks/MockOracle.sol";
 ///   --isolate     each swapMany call is its own transaction; isolated calls see base fee 0
 ///   no --isolate  the whole run is one transaction (every block's swaps share it), and
 ///                 vm.fee sets a new base fee in every block
-/// Each run appends one line to results/e7_block_scope/fuzz_v1_<mode>.csv.
+/// Each run appends one line to fuzz_v1_<mode>.csv in $BLOCK_SCOPE_OUT when an experiment script
+/// sets it (e.g. ../results/e7_block_scope), else in the gitignored scratch directory
+/// cache/scratch/e7_block_scope, so a plain test run never overwrites a result.
 contract BlockScopeFuzzTest is BlockScopedHookTestBase {
     uint256 internal constant K = 1e18;
     uint256 internal constant NONE = type(uint256).max;
@@ -74,7 +76,9 @@ contract BlockScopeFuzzTest is BlockScopedHookTestBase {
         }
         transientProbe.set();
         isolated = !transientProbe.isSet();
-        logPath = isolated ? "../results/e7_block_scope/fuzz_v1_isolate.csv" : "../results/e7_block_scope/fuzz_v1_no_isolate.csv";
+        string memory dir = vm.envOr("BLOCK_SCOPE_OUT", string("cache/scratch/e7_block_scope"));
+        vm.createDir(dir, true);
+        logPath = string.concat(dir, isolated ? "/fuzz_v1_isolate.csv" : "/fuzz_v1_no_isolate.csv");
         if (vm.exists(logPath)) vm.removeFile(logPath);
         vm.writeLine(logPath, "swaps,txs,multi_swap_txs,blocks,senders,charged,oracle_invalid_swaps,mid_block_updates,mismatches");
     }

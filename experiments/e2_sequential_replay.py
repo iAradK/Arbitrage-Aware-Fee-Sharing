@@ -39,6 +39,8 @@ from common.pools import CACHE, POOLS  # noqa: E402
 CFG = ROOT / "experiments" / "configs" / "e2.yml"
 PRIOR = {"valid": "train", "test": "valid"}
 BASELINE, STATIC, UNCON, RULE = 0, 1, 2, 3
+DYNFEE, MEVTAX = 4, 5          # E8 baselines (oracle-deviation dynamic fee, MEV tax under competitive bidding)
+DYNFEE_MAX = 0.5               # cap on the dynamic fee (a fee this high already blocks every correction in the data)
 
 
 def make_configs(cfg: dict) -> pd.DataFrame:
@@ -67,13 +69,27 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
     (columns t, err_usd: baseline candidates of the preceding split), eps_S is rolling: at each step the P95 of |S_hat - S|
     over baseline candidates (seed plus this run's config 0) in the trailing eps_window_days, strictly earlier.
     Each configuration pays its own gas amount C["gas"]. If `baseline_nohook` is present, every action step of its path
-    also logs feasibility with and without the hook overhead on that same state (DECISIONS W2)."""
+    also logs feasibility with and without the hook overhead on that same state (DECISIONS W2).
+
+    Optional columns of C (E8; absent in E2, which then runs exactly as frozen):
+      gas_ch  gas paid when the configuration charges (r > 0), e.g. hook overhead with settlement; default `gas`
+      ghat    gas amount in the hook's K_hat; default `gas`
+      buf     "abs" (P95 of |S_hat - S|, E2) or "signed" (one-sided: P95 of S_hat - S, floored at 0); default "abs"
+      beta    DYNFEE: fee = pool fee + beta * |log(P_pool / P_hat)|, set from the pre-swap state; LPs keep the excess fee
+      tax_t   MEVTAX: competing searchers bid their margin, so the tax takes t/(1+t) of S - C - R"""
     T, nC, G = len(g), len(C), cfg["grid_points"]
     fee = pool.fee
     fr = np.arange(1, G + 1) / G
     kind, lam, gam, phi = (C[c].to_numpy() for c in ("kind", "lam", "gamma", "phi"))
     dm = C["dmult"].to_numpy()
     gas_u = C["gas"].to_numpy(dtype=float)
+    ext_gas = "gas_ch" in C or "ghat" in C
+    gas_ch = C["gas_ch"].to_numpy(dtype=float) if "gas_ch" in C else gas_u
+    gas_hat = C["ghat"].to_numpy(dtype=float) if "ghat" in C else gas_u
+    signed = (C["buf"].to_numpy() == "signed") if "buf" in C else np.zeros(nC, dtype=bool)
+    beta = C["beta"].to_numpy(dtype=float) if "beta" in C else np.zeros(nC)
+    tax_t = C["tax_t"].to_numpy(dtype=float) if "tax_t" in C else np.zeros(nC)
+    has_dyn = bool((kind == DYNFEE).any())
     nh = np.flatnonzero(C["mech"].to_numpy() == "baseline_nohook")
     jn = int(nh[0]) if len(nh) else -1
     nh_act, nh_f150, nh_f180 = np.zeros(T, dtype=bool), np.zeros(T, dtype=bool), np.zeros(T, dtype=bool)
@@ -91,8 +107,12 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
     rolling = eps_seed is not None
     if rolling:
         W = np.timedelta64(int(cfg["eps_window_days"] * 86400e9), "ns")
-        h_t = np.concatenate([pd.DatetimeIndex(eps_seed["t"]).tz_convert(None).values, np.zeros(T, dtype="datetime64[ns]")])
+        st = pd.DatetimeIndex(eps_seed["t"])
+        st = st.tz_convert(None) if st.tz is not None else st           # an empty seed may come back tz-naive
+        h_t = np.concatenate([st.values.astype("datetime64[ns]"), np.zeros(T, dtype="datetime64[ns]")])
         h_e = np.concatenate([eps_seed["err_usd"].to_numpy(dtype=float), np.zeros(T)])
+        if signed.any():                                 # signed history S_hat - S of the same candidates (E8)
+            h_s = np.concatenate([eps_seed["err_signed_usd"].to_numpy(dtype=float), np.zeros(T)])
         n_h, lo = len(eps_seed), 0
     tt = pd.DatetimeIndex(g["t"]).tz_convert(None).values
     day = pd.DatetimeIndex(g["t"]).floor("D")
@@ -119,8 +139,12 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
                 lo += 1
             win = h_e[lo:n_h]
             eps_now = float(np.quantile(win, tq)) if len(win) >= 20 else (float(np.quantile(h_e[:n_h], tq)) if n_h else 0.0)
+            if signed.any():
+                ws = h_s[lo:n_h] if len(win) >= 20 else h_s[:n_h]
+                eps_now_s = max(float(np.quantile(ws, tq)), 0.0) if len(ws) else 0.0
         else:
             eps_now = eps_usd
+            eps_now_s = eps_usd
         eps_used[i] = eps_now
         usd = usd_a[i]
         Cst = mg.gas_cost_num(gas_a[i], en_a[i], gas_u)   # per configuration
@@ -145,20 +169,43 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
         cSh[i] = max(pih * t0["d0"][0] + t0["d1"][0], 0.0) * usd
         if rolling and bf[0]:
             h_t[n_h], h_e[n_h] = tt[i], abs(cSh[i] - cS[i])
+            if signed.any():
+                h_s[n_h] = cSh[i] - cS[i]
             n_h += 1
         dacc["n_bf"][di] += bf
         if not bf.any():
             continue
         ix = np.flatnonzero(bf)
-        n = n0[ix, None] * fr[None, :]
-        tr = cpmm.trade(x[ix, None], y[ix, None], fee, dirn[ix, None], n)
+        if has_dyn:                                      # the dynamic fee is set from the pre-swap state; feasibility above stays at the pool fee
+            fee_c = np.where(kind == DYNFEE, np.minimum(fee + beta * np.abs(np.log(p / pih)), DYNFEE_MAX), fee)
+            dirn_c, n0_c = cpmm.full_correction_net(x, y, fee_c, pib)
+            fee_g = fee_c[ix, None]
+        else:
+            dirn_c, n0_c, fee_g = dirn, n0, fee
+        n = n0_c[ix, None] * fr[None, :]
+        tr = cpmm.trade(x[ix, None], y[ix, None], fee_g, dirn_c[ix, None], n)
         S = np.maximum(pib * tr["d0"] + tr["d1"], 0.0)
         Sh = np.maximum(pih * tr["d0"] + tr["d1"], 0.0)
-        delta = (eps_now * dm[ix] / usd)[:, None]
-        rule = np.minimum(lam[ix, None] * Sh, (1 - gam[ix, None]) * np.maximum(Sh - K[ix, None] - delta, 0.0))
+        eps_c = np.where(signed[ix], eps_now_s, eps_now) if signed.any() else eps_now
+        delta = (eps_c * dm[ix] / usd)[:, None]
+        Kh = (mg.gas_cost_num(gas_a[i], en_a[i], gas_hat) + R) if ext_gas else K      # the hook's K_hat
+        rule = np.minimum(lam[ix, None] * Sh, (1 - gam[ix, None]) * np.maximum(Sh - Kh[ix, None] - delta, 0.0))
         k_ = kind[ix, None]
         r = np.where(k_ == STATIC, phi[ix, None] * tr["notional"], np.where(k_ == UNCON, lam[ix, None] * Sh, np.where(k_ == RULE, rule, 0.0)))
-        Pi = S - Cst[ix, None] - r
+        if has_dyn:                                      # LPs keep the fee above the pool fee; S is reported net of the pool fee only
+            # the fee is paid in the input token: token1 when buying token0, token0 (valued at the benchmark) when selling
+            r_dyn = (fee_g - fee) * tr["gross_in"] * np.where(dirn_c[ix, None] < 0, pib, 1.0)
+            dyn = k_ == DYNFEE
+            r = np.where(dyn, r_dyn, r)
+            S = np.where(dyn, S + r_dyn, S)
+        if (kind == MEVTAX).any():
+            tx = tax_t[ix, None]
+            r = np.where(k_ == MEVTAX, tx / (1 + tx) * np.maximum(S - Cst[ix, None] - R, 0.0), r)
+        if ext_gas:                                      # a charged swap pays the settlement gas (E8)
+            Cg = np.where(r > 0, mg.gas_cost_num(gas_a[i], en_a[i], gas_ch)[ix, None], Cst[ix, None])
+        else:
+            Cg = Cst[ix, None]
+        Pi = S - Cg - r
         tol = 1e-9 * max(1.0, R)
         feas = Pi >= R - tol
         anyf = feas.any(axis=1)
@@ -167,7 +214,7 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
         full = G - 1
         acc["n_viol_q0"][ix] += Pi[:, full] < R - tol
         dacc["n_viol_q0"][di, ix] += Pi[:, full] < R - tol
-        cap = (1 - gam[ix]) * np.maximum(S[:, full] - K[ix], 0.0)
+        cap = (1 - gam[ix]) * np.maximum(S[:, full] - (Cg[:, full] + R if ext_gas else K[ix]), 0.0)
         acc["n_capviol"][ix] += (r[:, full] > cap + 1e-9 * np.maximum(1.0, cap)) & (kind[ix] != BASELINE)
         ex = ix[anyf]
         jj, rj = j[anyf], rr[anyf]
@@ -216,7 +263,10 @@ def eps_seed(pool_key: str, variant: str, R: float, d: int, k: int, split: str, 
     C0 = make_configs(cfg).iloc[[0]].reset_index(drop=True)
     c = simulate(gv, POOLS[pool_key], C0, cfg, R, 0.0, d, k)["cand"]
     c = c[c["bf"]]
-    return pd.DataFrame({"t": c["t"].to_numpy(), "err_usd": (c["S_hat_usd"] - c["S_usd"]).abs().to_numpy()})
+    # keep the tz-aware dtype even when no candidate is baseline-feasible (to_numpy() on an empty tz-aware column
+    # yields a tz-naive index; seen for ETH/wstETH raw in the last days of March 2026, DECISIONS H7)
+    return pd.DataFrame({"t": pd.DatetimeIndex(c["t"]).tz_convert("UTC"), "err_usd": (c["S_hat_usd"] - c["S_usd"]).abs().to_numpy(),
+                         "err_signed_usd": (c["S_hat_usd"] - c["S_usd"]).to_numpy()})    # signed: E8 one-sided buffer
 
 
 def eps_table(pool_key: str, variant: str, regimes: dict, d: int, cfg: dict, k: int = 1) -> dict:

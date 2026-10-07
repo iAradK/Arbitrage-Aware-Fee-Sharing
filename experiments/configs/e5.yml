@@ -1,6 +1,6 @@
 experiment: e5
 seed: 20260924
-pools: [eth_usdc_005, usdc_usdt_0001, eth_wbtc_030, eth_wsteth_001]
+pools: [eth_usdc_005, eth_wbtc_030, eth_wsteth_001]   # USDC/USDT excluded (DECISIONS W8, H2)
 # E5 uses TRAIN months only (states, shocks, reservation regime): it never touches valid or test data.
 n_scenarios: 1500
 shock_horizons_min:            # reference log-returns over these horizons are sampled from train (per pool)
@@ -27,7 +27,7 @@ gammas: [0.0, 0.005, 0.02, 0.05, 0.10]
 # sensitivity ranges (no external order-book data), not fitted: c1 = external_fee_bps * 1e-4, and c2 is set so that the
 # marginal size-dependent cost at the median train notional equals curvature_multiple * c1  (c2 = m*c1 / (2*N_med)).
 gas_units: [100000, 150000, 200000, 300000]
-hook_overhead_gas: 30032       # v2: measured in E7, cold single-transaction first call (results/e7/gas_profile.json first_call_gas)
+hook_overhead_gas: 30214     # v4 (DECISIONS H6): measured in E7 on the current contract with settlement (commit 8ca840a), cold first call, results/e7/gas_profile.json first_call_gas; v2/v3 used 30032
 # per pool. The brief's {1, 5, 10} bps is kept for ETH/USDC and ETH/WBTC. For the two 1 bp-fee pools an external cost of 1 bp or more per
 # unit notional already exceeds the whole fee band (no arbitrage is baseline-feasible), so those pools use a grid of 0.05-0.25 bp.
 external_fee_bps:

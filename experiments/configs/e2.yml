@@ -1,6 +1,6 @@
 experiment: e2
 seed: 20260924
-pools: [eth_usdc_005, usdc_usdt_0001, eth_wbtc_030, eth_wsteth_001]
+pools: [eth_usdc_005, eth_wbtc_030, eth_wsteth_001]   # USDC/USDT excluded (DECISIONS W8, H2)
 # basis variants per pool: raw reference, and the lookahead-free trailing offset (24h primary, 6h/7d sensitivity)
 variants:
   eth_usdc_005: [raw]
@@ -8,7 +8,7 @@ variants:
   eth_wbtc_030: [raw, corr24h, corr6h, corr7d]
   eth_wsteth_001: [raw, corr24h, corr6h, corr7d]
 gas_units: 150000            # arbitrage tx gas (assumption; E5 sweeps it, E7 measures the hook overhead)
-hook_overhead_gas: 30032     # v2: measured in E7, cold single-transaction first call (results/e7/gas_profile.json first_call_gas)
+hook_overhead_gas: 30214     # v4 (DECISIONS H6): measured in E7 on the current contract with settlement (commit 8ca840a), cold first call, results/e7/gas_profile.json first_call_gas; v2/v3 used 30032
 hook_lag_min: 0              # hook reference = benchmark series lagged by this many minutes; 0 = ideal oracle (DECISIONS D9). Run --lag 1 / --lag 5 for the buffered comparison
 r_quantiles: [0.25, 0.5, 0.75]     # low / median / high reservation payoff, train swaps (DECISIONS D6)
 eps_quantile: 0.95

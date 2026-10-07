@@ -1,6 +1,6 @@
 experiment: e4
 seed: 20260924
-pools: [eth_usdc_005, usdc_usdt_0001, eth_wbtc_030, eth_wsteth_001]
+pools: [eth_usdc_005, eth_wbtc_030, eth_wsteth_001]   # USDC/USDT excluded (DECISIONS W8, H2)
 variants:
   eth_usdc_005: [raw]
   usdc_usdt_0001: [raw]
@@ -11,7 +11,7 @@ etas: [-0.5, -0.25, 0.0, 0.25, 0.5]     # K_hat = (1 + eta) K   (DECISIONS D4)
 lam: 0.75
 gamma: 0.05                              # the old oracle-delay experiment used lambda = 0.75, gamma = 0.05
 gas_units: 150000              # arbitrage tx gas excluding the hook
-hook_overhead_gas: 30032       # v2: measured in E7, cold single-transaction first call (results/e7/gas_profile.json first_call_gas)
+hook_overhead_gas: 30214     # v4 (DECISIONS H6): measured in E7 on the current contract with settlement (commit 8ca840a), cold first call, results/e7/gas_profile.json first_call_gas; v2/v3 used 30032
 r_regime: median                         # median reservation payoff from train swaps (DECISIONS D6)
 r_quantiles: [0.25, 0.5, 0.75]
 eps_quantile: 0.95
@@ -20,14 +20,16 @@ pyth:
   enabled: true                          # real on-chain Pyth realism check, ETH/USDC pool only, events end 2026-08-17
   # DECISIONS W1: July only. Events thin out from late July (4-48 per week in August, gaps of 2-3 days, likely an
   # incomplete download), so candidates from 2026-08-01 on are dropped rather than given a days-old price
-  last_event_cutoff: "2026-08-01 00:00:00+00:00"
+  last_event_cutoff: "2026-07-27 00:00:00+00:00"   # = STUDY_END since 2026-10-01 (DECISIONS H1); events are complete to there
   # v3 (DECISIONS W5): staleness check of the hook (Section 4.3, fail open). Prespecified grid, fixed before the July rerun.
   # A price older than max_age_s is invalid, so the hook applies r = 0. Rows without a check are kept for comparison only.
   max_age_s_grid: [60, 300, 3600]
   # primary A_max, chosen on the validation months only: the largest effective recapture with delta = eps_S (rolling, eta = 0,
-  # k = 1, all candidates) subject to <= 1% participation violations. Valid: 60 s 0.09% / 0.03%, 300 s 0.15% / 0.18%,
-  # 3600 s 0.21% / 2.2% (fails the 1% bound). The whole grid is reported.
-  primary_max_age_s: 300
+  # k = 1, all candidates) subject to <= 1% participation violations. Validation April-May 2026 (DECISIONS H5):
+  # 60 s 0.01% violations / 0.19% recapture, 300 s 0.19% / 0.15%, 3600 s 2.28% / 0.29% (fails the 1% bound) -> 60 s.
+  # (The September 2026 validation May-June gave 300 s: 60 s 0.09% / 0.03%, 300 s 0.15% / 0.18%, 3600 s 0.21% / 2.2%.)
+  # The whole grid is reported.
+  primary_max_age_s: 60
 # --- v2 (DECISIONS V5, V6)
 cadences_min: [1, 5, 15]                 # the searcher acts every k minutes; k = 1 is the v1 design
 eps_window_days: 7                       # rolling eps_S: trailing window, strictly earlier candidates (chosen on validation by coverage)

@@ -1,6 +1,6 @@
 experiment: e1
 seed: 20260924
-pools: [eth_usdc_005, usdc_usdt_0001, eth_wbtc_030, eth_wsteth_001]
+pools: [eth_usdc_005, eth_wbtc_030, eth_wsteth_001]   # USDC/USDT excluded (DECISIONS W8, H2)
 # depth is inferred from price impact (the subgraph has no liquidity column)
 min_rel_move: 1.0e-8          # ignore swaps whose sqrtP moves by less than this (float precision floor)
 consistency_tol: 0.02         # |L_in / L_out - 1| <= tol marks a single-range, chain-consistent swap

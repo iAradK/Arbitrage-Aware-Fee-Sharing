@@ -1,6 +1,6 @@
 experiment: e6
 seed: 20260924
-pools: [eth_usdc_005, usdc_usdt_0001, eth_wbtc_030, eth_wsteth_001]
+pools: [eth_usdc_005, eth_wbtc_030, eth_wsteth_001]   # USDC/USDT excluded (DECISIONS W8, H2)
 variants:
   eth_usdc_005: [raw]
   usdc_usdt_0001: [raw]
@@ -12,7 +12,7 @@ lam: 0.75
 gamma: 0.05
 delta_usd: 0.0
 gas_units: 150000               # arbitrage tx gas excluding the hook (assumption)
-hook_overhead_gas: 30032        # v2: measured in E7, cold single-transaction first call (results/e7/gas_profile.json first_call_gas)
+hook_overhead_gas: 30214     # v4 (DECISIONS H6): measured in E7 on the current contract with settlement (commit 8ca840a), cold first call, results/e7/gas_profile.json first_call_gas; v2/v3 used 30032
 r_regime: median
 r_quantiles: [0.25, 0.5, 0.75]
 min_fragment_usd: 0.05          # smallest surplus fragment in the adversarial partition search

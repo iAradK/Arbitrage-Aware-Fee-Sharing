@@ -1,6 +1,8 @@
 # Experiment B: splitting a correction across consecutive blocks (validation months)
 
-`experiments/eB_cross_block_split.py`, run on commit 3555e77 (branch eB-cross-block). The run was clean except for `data/data/binance/*_1m.csv.gz`: the main checkout's current klines, uncommitted there, with their sha256 in `manifest_valid.json`. No test month was used. Opportunities run from 2026-04-01 to 2026-05-31; the 3 whose 75-block horizon would reach June were dropped.
+`experiments/eB_cross_block_split.py`, run on commit a2b75ea (branch eB-cross-block). The run was clean except for `data/data/binance/*_1m.csv.gz`: the main checkout's current klines, uncommitted there, with their sha256 in `manifest_valid.json`. No test month was used. Opportunities run from 2026-04-01 to 2026-05-31; the 3 whose 75-block horizon would reach June were dropped.
+
+**Provenance note (2026-10-07).** The run itself executed on commit 3555e77, which `manifest_valid.json` records. On 2026-10-07 the branch was rebased onto efca476, which turned 3555e77 into a2b75ea. The two differ only in experiments/configs/e1, e4, e5, e6 and e8.yml, and eB loads none of them (it reads e2.yml only). The run's code and inputs are therefore identical, and eB was not rerun. 3555e77 is preserved under `refs/backup/pre-frozen/eB-cross-block`.
 
 ## Setup
 

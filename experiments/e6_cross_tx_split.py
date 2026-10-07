@@ -57,7 +57,7 @@ def main():
     R_usd = mg.r_regimes_usd(POOL, VARIANT, cfg["gas_units"], cfg["r_quantiles"])[cfg["r_regime"]]
     c_all, _ = e6.all_candidates(POOL, VARIANT, SPLIT, cfg, R_usd)
     sam = c_all[(c_all["n_used"] > 0) & (c_all["S"] - c_all["C"] >= c_all["R"])].reset_index(drop=True)
-    assert len(sam) == 1177, len(sam)                                   # the sample reported in Section 5.4.2
+    assert len(sam) > 0, "no baseline-feasible fragmentation candidates"   # the size is reported as `n` (1,177 in the v3 window)
 
     blocks = pd.read_parquet(CACHE / "block_gas.parquet", columns=["timestamp", "tip_p50_wei", "gas_source"])
     train = (pd.DatetimeIndex(blocks["timestamp"]) < mg.VALID_START) & (blocks["gas_source"] == "fee_history").to_numpy()

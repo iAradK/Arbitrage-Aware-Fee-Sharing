@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pool fees and TVL on the test months, with a check of the subgraph's fee field (external review 1.1(d)).
 
-Reads data/data/subgraph/pool_day_data_jul_aug_2026.json (written by data/fetch_pool_day_data.py). For v4 pools the
+Reads data/data/subgraph/pool_day_data_jun_jul_2026.json (written by data/fetch_pool_day_data.py). For v4 pools the
 subgraph derives feesUSD from volume and the fee tier, which is wrong for pools with dynamic fees and has been seen to
 exceed the volume itself. Per pool, the check compares:
   - subgraph feesUSD with volumeUSD x fee tier (daily ratio, flagged outside [0.9, 1.1]),
@@ -30,7 +30,7 @@ from common import reporting  # noqa: E402
 from common.pools import CACHE, POOLS  # noqa: E402
 from e2_bootstrap import PRIMARY  # noqa: E402
 
-SRC = ROOT / "data" / "data" / "subgraph" / "pool_day_data_jul_aug_2026.json"
+SRC = ROOT / "data" / "data" / "subgraph" / "pool_day_data_jun_jul_2026.json"
 TOL = 0.10
 DYNAMIC_FEE_FLAG = 0x800000
 ZERO_HOOK = "0x" + "0" * 40

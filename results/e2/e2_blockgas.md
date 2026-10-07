@@ -53,7 +53,7 @@ Relative changes against the stored results. Every pool and variant is in
 | mean price error, ETH/WBTC offset | +0.55% | +1.14% | −0.01% | +0.02% |
 | executed corrections, ETH/USDC | +3.5% | +9.3% | −0.04% | 0 |
 | execution rate | 0 (1.000) | 0 | 0 | 0 |
-| participation violations | 0 (none) | 0 | ±0.4% (ETH/USDC 0.77%) | ≤ 1% |
+| participation violations | 0 (none) | 0 | +0.04% (ETH/USDC rate 0.77%), others ≤ 0.24% | −0.95% to +0% |
 
 A charged correction now pays more gas. The searcher therefore stops some corrections short,
 which leaves more but smaller corrections and a slightly higher price error. In ETH/wstETH the

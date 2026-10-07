@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -59,7 +60,8 @@ from common.mechanism import argmax_smallest  # noqa: E402
 from common.pools import CACHE, POOLS, RESULTS  # noqa: E402
 
 OUT = RESULTS / "eB"
-GAS_CFG = ROOT / "config" / "gas_block_scope.json"
+# GAS_BLOCK_SCOPE_CONFIG overrides the path (e.g. to reproduce a result made with an earlier version of the file).
+GAS_CFG = Path(os.environ.get("GAS_BLOCK_SCOPE_CONFIG", ROOT / "config" / "gas_block_scope.json"))
 NS = (1, 2, 5, 75)
 POOL_VARIANTS = [("eth_usdc_005", "raw"), ("eth_wbtc_030", "raw"), ("eth_wbtc_030", "corr24h")]
 RULES = {"ideal": ("retained", 1, 0), "buffered": ("buffered_1eps", 15, 1)}   # mechanism, cadence k, delay d

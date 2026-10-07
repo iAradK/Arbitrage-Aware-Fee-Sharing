@@ -1,22 +1,27 @@
 {
- "description": "Canonical gas figures of the block-scoped ParticipationAwareHook. Overheads are gas with the hook minus the identical swap without a hook, each measured swap a cold transaction (forge test --isolate). Additional transaction = 21,000 + steady-state swap without a hook + hook overhead. Not used by any experiment yet; results/e7/gas_profile.json and hook_overhead_gas are unchanged.",
+ "description": "Canonical gas figures of the final block-scoped ParticipationAwareHook (block scope V1 with per-transaction clipping, relative buffer, current transaction in transient storage). Overheads are gas with the hook minus the identical swap without a hook, each measured swap a cold transaction (forge test --isolate). An uncharged correction is priced at the first swap of a block whose block surplus changes (new_block_positive_surplus); when the surplus stays 0 the hook costs 35,901 instead. Additional transaction = intrinsic 21,000 + steady-state swap without a hook + hook overhead. Read by experiments/e2_blockgas.py and experiments/eB_cross_block_split.py (and through eB by eQ3, eQ4 and eQ5); GAS_BLOCK_SCOPE_CONFIG overrides the path, e.g. to reproduce a result made with an earlier version of this file.",
  "hook": "contracts/src/hooks/ParticipationAwareHook.sol (block-scoped)",
  "source": {
   "table": "results/gas/gas_cold.csv",
-  "table_git_blob": "8dd47cc17fce8847d89cfe217c1a8fcebff6a9b0",
-  "table_commit": "a8942a4",
+  "table_sha256": "3d217916c58723faac194df095325c87e57979c034f8f50b2b15c9dfa02128ad",
+  "table_tracked": false,
   "script": "experiments/gas_cold_table.py",
-  "measured_on_contracts_commit": "ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a",
-  "explanation": "results/gas/README.md"
+  "measured_on_contracts_commit": "9cee5cfb2fb884be0268294d9fbbb5e7ef89d9e7",
+  "same_hook_as": "27fef0a (s2-gas-transient, identical figures)",
+  "explanation": "NOTES/2026-10-06_block_scoped_hook.md sections 9 and 10"
  },
  "hook_overhead_gas": {
-  "first_swap_of_block": 34559,
-  "charged_swap": 48177,
-  "charged_swap_empty_vault_sensitivity": 65277
+  "first_swap_of_block": 38696,
+  "charged_swap": 52337,
+  "charged_swap_empty_vault_sensitivity": 69437,
+  "second_transaction_same_block": 20035
  },
  "additional_transaction_new_block_gas": {
-  "uncharged": 155595,
-  "charged": 169213
+  "uncharged": 159732,
+  "charged": 173373
+ },
+ "additional_transaction_same_block_gas": {
+  "uncharged": 141071
  },
  "intrinsic_gas": 21000,
  "swap_gas_steady_state": 100036,

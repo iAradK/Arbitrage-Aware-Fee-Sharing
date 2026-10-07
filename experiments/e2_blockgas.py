@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -44,7 +45,8 @@ from common.pools import CACHE, POOLS, RESULTS  # noqa: E402
 
 SPLIT = "valid"
 OUT = RESULTS / "e2"
-GAS_CFG = ROOT / "config" / "gas_block_scope.json"
+# GAS_BLOCK_SCOPE_CONFIG overrides the path (e.g. to reproduce a result made with an earlier version of the file).
+GAS_CFG = Path(os.environ.get("GAS_BLOCK_SCOPE_CONFIG", ROOT / "config" / "gas_block_scope.json"))
 SUFFIX = {"blockgas": "blockgas", "blockgas_emptyvault": "blockgas_emptyvault"}
 RUNS = {"ideal": ("valid_lag0_med", "retained", 0.0), "buffered": ("valid_lag1_k15_med", "buffered_1eps", 1.0)}
 KEYS = ["pool", "variant", "regime", "mech", "lam", "gamma", "dmult", "phi"]

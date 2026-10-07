@@ -1,0 +1,22 @@
+pool,variant,check,ok,transfer_usd,a_tipped,n_rows
+eth_usdc_005,raw,p95 eps at the observed swaps == Q4 eps_P_rel,True,,,
+eth_usdc_005,raw,"p95 observed-swap charges (tx, V1, standalone) == Q4 prop_rel",True,,,
+eth_usdc_005,raw,Q4 stored fixed V1,True,42995.083664,104.0,
+eth_usdc_005,raw,Q4 stored fixed tx,True,42156.901853,40.0,
+eth_usdc_005,raw,Q4 stored prop_rel V1,True,38722.004483,95.0,
+eth_usdc_005,raw,Q4 stored prop_rel tx,True,38537.513655,74.0,
+eth_usdc_005,raw,"p95 cross-block rows (N, l*, charges) == Q4 prop_rel dynamic",True,,,10420.0
+eth_wbtc_030,corr24h,p95 eps at the observed swaps == Q4 eps_P_rel,True,,,
+eth_wbtc_030,corr24h,"p95 observed-swap charges (tx, V1, standalone) == Q4 prop_rel",True,,,
+eth_wbtc_030,corr24h,Q4 stored fixed V1,True,2309.0281840985,3.0,
+eth_wbtc_030,corr24h,Q4 stored fixed tx,True,2309.0281840985,3.0,
+eth_wbtc_030,corr24h,Q4 stored prop_rel V1,True,1480.2322997012998,3.0,
+eth_wbtc_030,corr24h,Q4 stored prop_rel tx,True,1480.2322997012998,3.0,
+eth_wbtc_030,corr24h,"p95 cross-block rows (N, l*, charges) == Q4 prop_rel dynamic",True,,,1768.0
+eth_wbtc_030,raw,p95 eps at the observed swaps == Q4 eps_P_rel,True,,,
+eth_wbtc_030,raw,"p95 observed-swap charges (tx, V1, standalone) == Q4 prop_rel",True,,,
+eth_wbtc_030,raw,Q4 stored fixed V1,True,2652.4908720407,6.0,
+eth_wbtc_030,raw,Q4 stored fixed tx,True,2635.4511659542004,4.0,
+eth_wbtc_030,raw,Q4 stored prop_rel V1,True,1799.1638400789,4.0,
+eth_wbtc_030,raw,Q4 stored prop_rel tx,True,1789.9755456799,3.0,
+eth_wbtc_030,raw,"p95 cross-block rows (N, l*, charges) == Q4 prop_rel dynamic",True,,,2060.0

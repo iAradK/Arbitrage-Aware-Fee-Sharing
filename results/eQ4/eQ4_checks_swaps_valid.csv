@@ -1,0 +1,7 @@
+pool,variant,check,ok,eps_S_median
+eth_usdc_005,raw,generic rolling quantile reproduces eA.rolling_eps (eps_S) exactly,True,16.79563755169147
+eth_usdc_005,raw,"no buffer, tau_hat 0.05 gwei reproduces Q2 tx / V1 / standalone",True,
+eth_wbtc_030,corr24h,generic rolling quantile reproduces eA.rolling_eps (eps_S) exactly,True,73.99110876330717
+eth_wbtc_030,corr24h,"no buffer, tau_hat 0.05 gwei reproduces Q2 tx / V1 / standalone",True,
+eth_wbtc_030,raw,generic rolling quantile reproduces eA.rolling_eps (eps_S) exactly,True,58.95287470359423
+eth_wbtc_030,raw,"no buffer, tau_hat 0.05 gwei reproduces Q2 tx / V1 / standalone",True,

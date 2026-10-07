@@ -1,0 +1,13 @@
+accumulation,rule,setting,pool,variant,n_corrections,n_charged,original_usd,survival_sum_weighted,survival_mean_of_per_correction_ratios,n_splits_evaluated,n_pieces_evaluated,deviation_wei_min,deviation_wei_max,n_splits_nonzero_deviation
+tx_clip,ideal,ideal_retained_k1_d0,eth_usdc_005,raw,7053,7053,26322.50062270398,1.0,1.0,2300052,371631306,0,0,0
+tx_clip,ideal,ideal_retained_k1_d0,eth_wbtc_030,raw,1247,1247,16245.767709669657,1.0,1.0,407260,65671553,0,0,0
+tx_clip,ideal,ideal_retained_k1_d0,eth_wbtc_030,corr24h,1039,1039,15101.690839055256,1.0,1.0,339508,54719005,0,0,0
+tx_clip,buffered,buffered_1eps_k15_d1,eth_usdc_005,raw,2204,431,19139.242374252062,1.0,1.0,713443,116013119,0,0,0
+tx_clip,buffered,buffered_1eps_k15_d1,eth_wbtc_030,raw,639,108,21687.07806477719,1.0,1.0,206859,33633836,0,0,0
+tx_clip,buffered,buffered_1eps_k15_d1,eth_wbtc_030,corr24h,531,92,19283.703293744475,1.0,1.0,171879,27949118,0,0,0
+swap_clip,ideal,ideal_retained_k1_d0,eth_usdc_005,raw,7053,7053,26322.50062270398,1.0,1.0,2300052,371631306,0,0,0
+swap_clip,ideal,ideal_retained_k1_d0,eth_wbtc_030,raw,1247,1247,16245.767709669657,1.0,1.0,407260,65671553,0,0,0
+swap_clip,ideal,ideal_retained_k1_d0,eth_wbtc_030,corr24h,1039,1039,15101.690839055256,1.0,1.0,339508,54719005,0,0,0
+swap_clip,buffered,buffered_1eps_k15_d1,eth_usdc_005,raw,2204,431,19139.242374252062,1.0,1.0,713443,116013119,0,0,0
+swap_clip,buffered,buffered_1eps_k15_d1,eth_wbtc_030,raw,639,108,21687.07806477719,1.0,1.0,206859,33633836,0,0,0
+swap_clip,buffered,buffered_1eps_k15_d1,eth_wbtc_030,corr24h,531,92,19283.703293744475,1.0,1.0,171879,27949118,0,0,0

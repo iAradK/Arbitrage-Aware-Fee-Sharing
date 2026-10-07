@@ -86,12 +86,41 @@ class ScopedHookReference:
 
     The transaction-scoped contract treats an invalid oracle at the first swap as disabling the pool for the rest
     of the transaction, and it has no uint128/int128 limits; neither difference matters for the checks here.
+
+    `accumulation` selects how the scope's surplus A is accumulated (the watermark and settlement are unchanged):
+      - "net" (the deployed hook): A = [pi . (sum of all deltas in the scope)]^+;
+      - "tx_clip" (V1, block scope only): A = sum over the completed transactions of the block of
+        [pi . (deltas of that transaction)]^+, plus [pi . (running deltas of the current transaction)]^+. A swap
+        whose transaction differs from the previous swap's folds the previous transaction into the sum;
+      - "swap_clip" (V2): A = sum over the scope's swaps of [pi . (deltas of that swap)]^+.
+    Each bracket is `hook_surplus` (product rounded toward zero, then clipped). The sum C of folded brackets is
+    uint128; leaving that range saturates W like the other limits.
+
+    `buffer` selects a proportional buffer deducted inside each bracket (kappa then holds no delta):
+      - "none" (the deployed hook): nothing;
+      - "abs": ceil(eps * g / WAD), eps = `eps_wad`, a price bound in token0 per token1 base unit, WAD-scaled like
+        the reference;
+      - "rel": ceil(eps * ref * g / WAD^2), eps = `eps_wad` a relative price bound (WAD = 100%).
+    g is the bracket's gross token1 volume, the sum of |d1| over its swaps (the scope for "net", the transaction for
+    "tx_clip", the swap for "swap_clip"). With token0 as the numeraire, S_hat - S = (P_hat - P) * d1 exactly, so the
+    deduction bounds the bracket's surplus error when |P_hat - P| <= eps. `eps_wad` is read when a scope opens and
+    locked with kappa; it can be changed between swaps like `kappa_const`. g is uint128 (saturates beyond).
     """
 
+    ACCUMULATIONS = ("net", "tx_clip", "swap_clip")
+    BUFFERS = ("none", "abs", "rel")
+
     def __init__(self, k_const: int, delta: int, lam_bps: int, gamma_bps: int, gas_units: int = 0,
-                 tau_wei: int = 0, gas_price_token0_wad: int = 0, scope: str = "block"):
+                 tau_wei: int = 0, gas_price_token0_wad: int = 0, scope: str = "block", accumulation: str = "net",
+                 buffer: str = "none", eps_wad: int = 0):
         if not 0 <= lam_bps <= 10_000 or not 0 <= gamma_bps < 10_000 or scope not in ("block", "tx"):
             raise ValueError("bad ScopedHookReference parameters")
+        if accumulation not in self.ACCUMULATIONS or (accumulation == "tx_clip" and scope != "block"):
+            raise ValueError("bad ScopedHookReference accumulation")
+        self.accumulation = accumulation
+        if buffer not in self.BUFFERS or eps_wad < 0:
+            raise ValueError("bad ScopedHookReference buffer")
+        self.buffer, self.eps_wad = buffer, eps_wad
         self.kappa_const = min(k_const + delta, U128_MAX)
         self.gas_units, self.tau_wei, self.gas_price = gas_units, tau_wei, gas_price_token0_wad
         self.lam_bps, self.gamma_bps, self.scope = lam_bps, gamma_bps, scope
@@ -118,7 +147,8 @@ class ScopedHookReference:
             if not oracle_price_wad or oracle_price_wad > U128_MAX:
                 return 0
             s = {"key": key, "W": 0, "lam": self.lam_bps, "gam": self.gamma_bps, "cum0": d0, "cum1": d1,
-                 "ref": oracle_price_wad, "kappa": self.kappa(basefee, oracle_price_wad), "saturated": False}
+                 "ref": oracle_price_wad, "kappa": self.kappa(basefee, oracle_price_wad), "saturated": False,
+                 "tx": tx, "C": 0, "g": abs(d1), "eps": self.eps_wad}
             self.pools[pool] = s
             if not (I128_MIN <= d0 <= I128_MAX and I128_MIN <= d1 <= I128_MAX):
                 s["saturated"] = True
@@ -126,12 +156,22 @@ class ScopedHookReference:
         else:
             if s["saturated"]:
                 return 0
-            c0, c1 = s["cum0"] + d0, s["cum1"] + d1
+            if self.accumulation == "tx_clip" and s["tx"] != tx:     # fold the completed transaction
+                s["C"] += self._bracket(s, s["cum0"], s["cum1"], s["g"])
+                c0, c1, s["tx"], s["g"] = d0, d1, tx, abs(d1)
+            else:
+                c0, c1 = s["cum0"] + d0, s["cum1"] + d1
+                s["g"] += abs(d1)
             if not (I128_MIN <= c0 <= I128_MAX and I128_MIN <= c1 <= I128_MAX):
                 s["saturated"] = True
                 return 0
             s["cum0"], s["cum1"] = c0, c1
-        a = hook_surplus(s["cum0"], s["cum1"], s["ref"])
+        if self.accumulation == "swap_clip":
+            s["C"] += self._bracket(s, d0, d1, abs(d1))
+        if s["C"] > U128_MAX or s["g"] > U128_MAX:
+            s["saturated"] = True
+            return 0
+        a = self.surplus(pool)
         target, _ = transfer_wad(a, s["kappa"], s["lam"] * BPS_TO_WAD, s["gam"] * BPS_TO_WAD, 0)
         if target <= s["W"]:
             return 0
@@ -151,6 +191,25 @@ class ScopedHookReference:
         s["W"] += collected
         self.last_token_amount = token
         return collected
+
+    def surplus(self, pool) -> int:
+        """The open scope's accumulated surplus A under the chosen accumulation (0 without a scope)."""
+        s = self.pools.get(pool)
+        if s is None:
+            return 0
+        if self.accumulation == "swap_clip":
+            return s["C"]
+        return s["C"] + self._bracket(s, s["cum0"], s["cum1"], s["g"])
+
+    def _bracket(self, s: dict, c0: int, c1: int, g: int) -> int:
+        """[c0 + c1 * ref / WAD - buffer(g)]^+ at the scope's locked reference and eps."""
+        if self.buffer == "none" or s["eps"] == 0:
+            return hook_surplus(c0, c1, s["ref"])
+        if self.buffer == "abs":
+            ded = -(-s["eps"] * g // WAD)
+        else:
+            ded = -(-s["eps"] * s["ref"] * g // (WAD * WAD))
+        return max(c0 + _div_trunc(c1 * s["ref"], WAD) - ded, 0)
 
 
 def prefix_surplus_wad(deltas0: Sequence[int], deltas1: Sequence[int], pi0_wad: int, pi1_wad: int) -> list[int]:

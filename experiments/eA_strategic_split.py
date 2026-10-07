@@ -469,8 +469,8 @@ def main():
               + [RESULTS / "e1" / f"depth_{k_}.parquet" for k_ in POOLS] + [CACHE / "block_gas.parquet"]
               + [GDIR / "hook_gas_isolated.csv", GDIR / "hook_gas_settled.csv"]
               + [RESULTS / "e2" / f"e2_summary_{t_}.parquet" for *_, t_ in REPLAYS.values()]
-              + [RESULTS / "e2" / f"e2_summary_test_lag{EPS_D}_med.parquet", RESULTS / "e2" / "frozen_config.sha256",
-                 RESULTS / "e6" / "frozen_config.sha256", ROOT / "experiments" / "configs" / "e2.yml",
+              + [RESULTS / "e2" / f"e2_summary_test_lag{EPS_D}_med.parquet", reporting.frozen_path("e2"),
+                 reporting.frozen_path("e6"), ROOT / "experiments" / "configs" / "e2.yml",
                  ROOT / "experiments" / "configs" / "e6.yml", Path(__file__).resolve()])
     reporting.write_manifest("eA", params, inputs, "test",
                              {"outputs": {p.name: sha(p) for p in sorted(OUT.glob("eA_*"))}, "parameters": params,

@@ -2,7 +2,7 @@
 """Build one aligned parquet per pool (swaps + lookahead-free reference + gas + offsets + split).
 
 Run from the repo root:  .venv/Scripts/python.exe experiments/build_aligned_dataset.py [--pools a,b]
-Outputs: cache/aligned/<pool>.parquet, cache/block_gas.parquet, results/data_qc.md, results/data_manifest.json
+Outputs: cache/aligned/<pool>.parquet, cache/block_gas.parquet, results/data_qc.md, config/data_manifest.json
 Reads data/ only; no network. Test-month statistics in the QC report are limited to counts and join rates.
 """
 from __future__ import annotations

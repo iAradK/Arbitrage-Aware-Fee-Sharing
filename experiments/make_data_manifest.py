@@ -1,4 +1,4 @@
-"""Regenerate results/data_manifest.json: the inventory (SHA-256, bytes) of every raw input the pipeline reads, the study
+"""Regenerate config/data_manifest.json (tracked): the inventory (SHA-256, bytes) of every raw input the pipeline reads, the study
 window and the splits from common/pools.py, and the known gaps. Experiment manifests copy the hashes from this file.
 
   python experiments/make_data_manifest.py
@@ -74,7 +74,7 @@ def main():
         },
         "files": {f: {"bytes": (ROOT / f).stat().st_size, "sha256": sha256(ROOT / f)} for f in files},
     }
-    out = RESULTS / "data_manifest.json"
+    out = ROOT / "config" / "data_manifest.json"
     out.write_text(json.dumps(m, indent=1))
     print(f"wrote {out} ({len(files)} files)")
 

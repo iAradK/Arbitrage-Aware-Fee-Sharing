@@ -25,6 +25,8 @@ results/
 
 # Large or temporary raw files
 *.json
+!config/data_manifest.json
+!contracts/test/hooks/vectors/*.json
 *.csv
 !NOTES/results_index.csv
 *.parquet

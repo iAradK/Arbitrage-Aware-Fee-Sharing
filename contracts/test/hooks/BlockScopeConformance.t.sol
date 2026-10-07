@@ -18,7 +18,7 @@ import {TransientProbe} from "./BlockScopedHookTestBase.sol";
 /// (block scope V1 with per-transaction clipping, relative proportional buffer) in three modes;
 /// every marginal charge is compared with ScopedHookReference(scope="block",
 /// accumulation="tx_clip", buffer="rel") via experiments/e7_v1_vectors.py ->
-/// results/e7_block_scope/vectors_v1.json:
+/// contracts/test/hooks/vectors/vectors_v1.json (tracked):
 ///   a  all fragments in one transaction
 ///   b  each fragment its own transaction, one block
 ///   c  each fragment its own transaction, 2-4 blocks (vm.roll)
@@ -28,7 +28,7 @@ import {TransientProbe} from "./BlockScopedHookTestBase.sol";
 contract BlockScopeConformanceTest is Test {
     using PoolIdLibrary for PoolKey;
 
-    string internal constant VECTORS = "../results/e7_block_scope/vectors_v1.json";
+    string internal constant VECTORS = "test/hooks/vectors/vectors_v1.json";
     string internal constant SCRATCH = "cache/scratch/e7_block_scope";
     address internal constant VAULT = address(0x7A017);
 

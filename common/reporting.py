@@ -12,6 +12,13 @@ import yaml
 from .data_io import sha256
 from .pools import REPO, RESULTS
 
+FROZEN_DIR = REPO / "config" / "frozen"          # tracked: config hash frozen after validation, per experiment
+DATA_MANIFEST = REPO / "config" / "data_manifest.json"   # tracked: inventory of the raw inputs (make_data_manifest.py)
+
+
+def frozen_path(exp: str) -> Path:
+    return FROZEN_DIR / f"{exp}.sha256"
+
 
 def load_config(path: str | Path) -> dict:
     return yaml.safe_load(open(path, encoding="utf-8"))
@@ -44,7 +51,7 @@ def guard_split(exp: str, split: str, confirm_frozen: bool, cfg: dict) -> None:
         return
     if not confirm_frozen:
         raise SystemExit("--split test requires --confirm-frozen")
-    f = out_dir(exp) / "frozen_config.sha256"
+    f = frozen_path(exp)
     if not f.exists():
         raise SystemExit(f"{f} missing: run the validation split and then --freeze before touching the test months")
     if f.read_text().strip() != config_hash(cfg):
@@ -52,7 +59,8 @@ def guard_split(exp: str, split: str, confirm_frozen: bool, cfg: dict) -> None:
 
 
 def freeze(exp: str, cfg: dict) -> None:
-    (out_dir(exp) / "frozen_config.sha256").write_text(config_hash(cfg))
+    FROZEN_DIR.mkdir(parents=True, exist_ok=True)
+    frozen_path(exp).write_text(config_hash(cfg))
 
 
 def write_manifest(exp: str, cfg: dict, inputs: list[Path], split: str, extra: dict | None = None,
@@ -61,7 +69,7 @@ def write_manifest(exp: str, cfg: dict, inputs: list[Path], split: str, extra: d
     which later runs of other tags do not overwrite. `latest=False` writes only the tagged file (analysis scripts)."""
     m = {"experiment": exp, "split": split, "git_commit": git_commit(), "config_hash": config_hash(cfg),
          "inputs": {str(Path(p).relative_to(REPO)): sha256(p) for p in inputs}}
-    dm = RESULTS / "data_manifest.json"
+    dm = DATA_MANIFEST
     if dm.exists():
         m["raw_data_sha256"] = {k: v["sha256"] for k, v in json.load(open(dm))["files"].items()}
     m.update(extra or {})

@@ -7,7 +7,7 @@ charges from common.fixedpoint.ScopedHookReference(scope="block", accumulation="
   c  every fragment its own transaction, over 2-4 consecutive blocks (contiguous groups, random cut points)
 The E7 fragments are numeraire values v; to exercise the buffer every fragment becomes a two-token swap
 (delta0, delta1) = (-2v, +3v) at a reference of 1.2 (so the product truncation also matters), with gross token1
-volume 3|v|. eps_rel = 2,830,000 ppb (0.283%), settlement in token0. Writes results/e7_block_scope/vectors_v1.json.
+volume 3|v|. eps_rel = 2,830,000 ppb (0.283%), settlement in token0. Writes contracts/test/hooks/vectors/vectors_v1.json (tracked: BlockScopeConformanceTest reads it).
 
   python experiments/e7_v1_vectors.py
 """
@@ -28,7 +28,7 @@ SEED = 20261007
 WAD = fp.WAD
 REF = 12 * 10**17
 EPS_PPB = 2_830_000
-OUT = RESULTS / "e7_block_scope"
+OUT = ROOT / "contracts" / "test" / "hooks" / "vectors"   # tracked: the conformance test's input
 
 
 def run(seq, d0, d1, blocks, txs):

@@ -5,7 +5,7 @@ Every correction of the replay is the first swap of its block (one action per mi
 the block-scoped overhead of a block's first swap: 34,559 gas when uncharged, 48,177 when charged (r > 0, settlement
 included). The hook's g_hat is the charged amount, as in DECISIONS I3 (K_hat matters only when the hook charges).
 Sensitivity: 65,277 for charged corrections (the vault holds none of the charged token). Everything else is E2 as
-frozen: experiments/e2_sequential_replay.py simulate(), config hash = results/e2/frozen_config.sha256, median
+frozen: experiments/e2_sequential_replay.py simulate(), config hash = config/frozen/e2.sha256, median
 reservation regime, rolling eps_S. Two runs, as stored:
   ideal     retained margin, hook lag 0, cadence 1    tag valid_lag0_med
   buffered  delta = eps_S (buffered_1eps), lag 1, cadence 15    tag valid_lag1_k15_med
@@ -58,7 +58,7 @@ def tag_of(d: int, k: int) -> str:
 
 def load_cfg() -> dict:
     cfg = reporting.load_config(e2.CFG)
-    frozen = (OUT / "frozen_config.sha256").read_text().strip()
+    frozen = reporting.frozen_path("e2").read_text().strip()
     assert reporting.config_hash(cfg) == frozen, "experiments/configs/e2.yml is not the frozen E2 config"
     return cfg
 

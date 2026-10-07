@@ -203,7 +203,7 @@ def main():
     if a.calibrate:
         calibrate(cfg, cfg2)
         return
-    assert reporting.config_hash(cfg2) == (ROOT / "results" / "e2" / "frozen_config.sha256").read_text().strip(), "E2 config is not the frozen one"
+    assert reporting.config_hash(cfg2) == reporting.frozen_path("e2").read_text().strip(), "E2 config is not the frozen one"
     hc = hashed_cfg(cfg, cfg2)
     if a.freeze:
         assert hc["beta_cal"] is not None, "run --calibrate first"

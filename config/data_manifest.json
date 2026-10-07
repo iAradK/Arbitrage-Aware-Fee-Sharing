@@ -1,0 +1,142 @@
+{
+ "note": "Inventory of the raw inputs read by the pipeline (experiments/make_data_manifest.py). Experiment manifests copy these hashes. Window and splits come from common/pools.py.",
+ "generated_utc": "2026-10-01T16:38:31+00:00",
+ "study_window_utc": {
+  "start": "2025-07-01T00:00:00+00:00",
+  "end_exclusive": "2026-07-27T00:00:00+00:00"
+ },
+ "splits": {
+  "train": [
+   "2025-07",
+   "2026-03"
+  ],
+  "valid": [
+   "2026-04",
+   "2026-05"
+  ],
+  "test": [
+   "2026-06",
+   "2026-07",
+   "test ends 2026-07-27T00:00:00+00:00 (exclusive)"
+  ]
+ },
+ "pools": {
+  "eth_usdc_005": {
+   "file": "data/swaps_data/swaps_eth_usdc_005.csv",
+   "reference": "binance_close:ETHUSDC",
+   "fee": 0.0005
+  },
+  "eth_wbtc_030": {
+   "file": "data/swaps_data/swaps_eth_wbtc_030.csv",
+   "reference": "binance_close:ETHBTC",
+   "fee": 0.003
+  },
+  "eth_wsteth_001": {
+   "file": "data/swaps_data/swaps_eth_wsteth_001.csv",
+   "reference": "lido:lido",
+   "fee": 0.0001
+  }
+ },
+ "excluded_pools": {
+  "usdc_usdt_0001": {
+   "file": "data/swaps_data/swaps_usdc_usdt_0001.csv",
+   "reason": "DECISIONS W8/H2; not extended to 2025-07"
+  }
+ },
+ "logical_names": {
+  "swaps": {
+   "eth_usdc_005": "data/swaps_data/swaps_eth_usdc_005.csv",
+   "eth_wbtc_030": "data/swaps_data/swaps_eth_wbtc_030.csv",
+   "eth_wsteth_001": "data/swaps_data/swaps_eth_wsteth_001.csv"
+  },
+  "binance_1m": {
+   "ETHUSDC": "data/data/binance/ETHUSDC_1m.csv.gz",
+   "ETHBTC": "data/data/binance/ETHBTC_1m.csv.gz",
+   "USDCUSDT": "data/data/binance/USDCUSDT_1m.csv.gz",
+   "ETHUSDT": "data/data/binance/ETHUSDT_1m.csv.gz",
+   "BTCUSDT": "data/data/binance/BTCUSDT_1m.csv.gz"
+  },
+  "lido_wsteth_rate": "data/data/lido/wsteth_rate_events.csv",
+  "fee_history_tips": [
+   "data/data/gas/fee_history_2025_07_08.csv",
+   "data/data/gas/fee_history_head.csv"
+  ],
+  "blocks_bigquery": [
+   "data/data/gas/bq-results-20260924-071952-1790234416211.csv",
+   "data/data/gas/bq-results-20261001-153524-1790868945186.csv"
+  ],
+  "pyth_onchain": "data/data/pyth/onchain_ETH_USD_events.csv.gz"
+ },
+ "known_gaps": {
+  "swap_gas_used": "tx_gasUsed == 0 in every subgraph swap row; gas units are a configured parameter (E5/E7). Receipt gas of every swap transaction is in data/data/bq/swap_logs_decoded.parquet (NOTES/2026-10-01_bigquery_crosscheck.md).",
+  "fee_history_tips": "real tips for every block of the window (fee_history_2025_07_08.csv + fee_history_head.csv, 2025-07-01 to 2026-07-31); blocks from 2026-08-01 have no tips and lie outside the window.",
+  "pyth_onchain": "complete over the window (monthly counts equal the BigQuery logs); events end 2026-08-17.",
+  "protocol_fee": "Uniswap protocol fee on from 2026-07-27 09:15 UTC (swap fee 1.25x LP fee); the window ends 2026-07-27 00:00 UTC.",
+  "binance_extent": "consolidated Binance files run 2025-07-01 to 2026-09-22; clipped to the window by load_klines."
+ },
+ "excluded_from_pipeline": {
+  "data/data/gas/BQ_gas_values.csv": "partial earlier export (2025-09-01..2025-09-17), superseded by blocks_bigquery",
+  "data/data/binance/raw/**": "raw daily/monthly zips; consolidated *_1m.csv.gz files are used instead",
+  "data/swaps_data/*/parts/**": "resumable download parts; combined swaps_<pool>.csv files are used",
+  "data/data/bq/**": "BigQuery cross-check exports (validation only, not read by the experiments)",
+  "archive/data_superseded/**": "previous versions of raw files"
+ },
+ "files": {
+  "data/swaps_data/swaps_eth_usdc_005.csv": {
+   "bytes": 359589279,
+   "sha256": "d9c2c69da87a04a5ee37a0de3d2e5bd773d3c3294411ab1f374c4e6a04929a93"
+  },
+  "data/swaps_data/swaps_eth_wbtc_030.csv": {
+   "bytes": 20888228,
+   "sha256": "dbb18a5fd63032dcfe690f677c8aac1926317fda6da32508378a645c01f2d66a"
+  },
+  "data/swaps_data/swaps_eth_wsteth_001.csv": {
+   "bytes": 19840751,
+   "sha256": "220d8931c2e393fb44bc8c486e00162906050233ed4e511e3a7e15fa080d45e0"
+  },
+  "data/data/binance/ETHUSDC_1m.csv.gz": {
+   "bytes": 24236043,
+   "sha256": "b7687d6fb4936f774b459fb51fd7fffceb68132ab8d49e041adeb1fada028ee4"
+  },
+  "data/data/binance/ETHBTC_1m.csv.gz": {
+   "bytes": 13187808,
+   "sha256": "a966a9095fc781428f950f92a64ce69c5ec6c15d615f3d95206757b35f646e91"
+  },
+  "data/data/binance/USDCUSDT_1m.csv.gz": {
+   "bytes": 17819650,
+   "sha256": "bc51e3d02777b4cf757b5e97013b7615f57cf4e4a2b4947fabc6cd7cf307e69c"
+  },
+  "data/data/binance/ETHUSDT_1m.csv.gz": {
+   "bytes": 25272714,
+   "sha256": "387b416d687a19c29515c328db905696a9b3824979083c7f8e3bd6a619403b17"
+  },
+  "data/data/binance/BTCUSDT_1m.csv.gz": {
+   "bytes": 26990690,
+   "sha256": "dd056ba943ea40c7368ae404485c209a8874de013b3ed68d874f73b96d5214cc"
+  },
+  "data/data/lido/wsteth_rate_events.csv": {
+   "bytes": 90692,
+   "sha256": "94240e11d8fc2d8216269b586867abd8cc2974cecfb197fa9234f83d716020b8"
+  },
+  "data/data/gas/fee_history_2025_07_08.csv": {
+   "bytes": 48411911,
+   "sha256": "c24a558a39325c23b17a47cf6383bb7111b9ba9345e2f44019e6e2cc3ad4c4af"
+  },
+  "data/data/gas/fee_history_head.csv": {
+   "bytes": 249675988,
+   "sha256": "7820df9e6cd66158aec1cb4e72ccc89ada4ba609b39bc5fb07cfe88145ba63b4"
+  },
+  "data/data/gas/bq-results-20260924-071952-1790234416211.csv": {
+   "bytes": 158360125,
+   "sha256": "c6f54a7b5172e70f8f7ccde10ad83c0b58ca34f64185235fc1136f27a99cb16c"
+  },
+  "data/data/gas/bq-results-20261001-153524-1790868945186.csv": {
+   "bytes": 27180390,
+   "sha256": "2961aed963b998600375c51f71a26fe780df97c669c8b6d153820f67f086d373"
+  },
+  "data/data/pyth/onchain_ETH_USD_events.csv.gz": {
+   "bytes": 2235977,
+   "sha256": "d8225a1f5574a0662c49777cdd95adafa51e581c29267a2ffbe60b182d39f07b"
+  }
+ }
+}

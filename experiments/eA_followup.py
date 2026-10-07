@@ -214,7 +214,7 @@ def main():
     exact = bool((tot["recomputed"] == tot["stored"]).all() and (tot["n_exec_recomputed"] == tot["n_exec_stored"]).all())
     eps_exact = bool((eps["recomputed"] == eps["stored"]).all())
     prov = {"per_correction_sizes": "in-memory re-execution of the frozen e2_sequential_replay.simulate() (unmodified; E2 config "
-                                    "hash equal to results/e2/frozen_config.sha256), restricted to the baseline plus the one "
+                                    "hash equal to config/frozen/e2.sha256), restricted to the baseline plus the one "
                                     "configuration; nothing under results/e2 written; a = F^-1(executed transfer)",
             "stored_totals_reproduced_exactly": exact, "rolling_eps_medians_reproduced_exactly": eps_exact,
             "reproduction": repro, "source_of_checks": "results/eA/eA_checks.csv"}

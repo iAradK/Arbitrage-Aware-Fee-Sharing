@@ -25,9 +25,14 @@ default; the test months need --confirm-frozen).
    a. tipped violations (Definition 3): standalone margin M = S - K >= 0 (S at the benchmark, K = 180,214 gas at the
       block's gas price + R) and charge r > M;
    b. spillover charges: r > 0 while the standalone charge is 0;
-   c. escaped transfer (reversal leak): within a scope, the increase of F(A_j) over F(A_{j-1}) that stays below the
-      watermark W_{j-1} after a counter-trade lowered A, so it pays nothing; reported in charge units as a share of the
-      collected transfer, and in surplus units (A re-created below its running maximum);
+   c. surplus re-created after a counter-trade lowered the cumulative surplus within a scope, which pays nothing; two
+      separately named parts, never merged:
+      c1. reversal leak below the watermark: the increase of F(A_j) over F(A_{j-1}) that stays below W_{j-1} (charge
+          units, share of the collected and of the standalone transfer), and A re-created below its running maximum
+          (surplus units);
+      c2. netting: surplus that refills a negative signed cumulative surplus X = pi . Delta_{1:j} (A = [X]^+) left by an
+          earlier swap of the scope with negative surplus, e.g. a back-run after a large trade; surplus units, and the
+          shortfall of those swaps' charges against their standalone charges;
    d. charges paid by non-arbitrage swaps, count and USD.
    Also: swaps charged after an earlier swap of the same block had failed open (invalid oracle).
 
@@ -117,13 +122,13 @@ def replay(al: pd.DataFrame, key: str, kappa_const: np.ndarray, gas_units: int, 
     hs = {sc: fp.ScopedHookReference(0, 0, lam_bps, gam_bps, gas_units=gas_units, tau_wei=tau_wei,
                                      scope="tx" if sc == "tx" else "block") for sc in SCOPES}
     n = len(al)
-    res = {sc: {f: [0] * n for f in ("r", "tok", "esc", "esc_s", "F", "A")} for sc in SCOPES}
+    res = {sc: {f: [0] * n for f in ("r", "tok", "esc", "esc_s", "net_s", "F", "A", "X")} for sc in SCOPES}
     for sc in SCOPES:
         res[sc]["failed_open"] = np.zeros(n, bool)
         res[sc]["after_fail"] = np.zeros(n, bool)
     for sc, h in hs.items():
         R = res[sc]
-        prev_key, F_prev, A_prev, A_max, W_prev = None, 0, 0, 0, 0
+        F_prev, A_prev, A_max, W_prev, X_prev = 0, 0, 0, 0, 0
         fail_blk = None
         for i in range(n):
             settle0 = d0[i] > 0                              # the swapper receives the numeraire
@@ -136,7 +141,7 @@ def replay(al: pd.DataFrame, key: str, kappa_const: np.ndarray, gas_units: int, 
             open_before = h.pools.get(PID)
             same = open_before is not None and open_before["key"] == scope_key
             if not same:
-                F_prev = A_prev = A_max = W_prev = 0
+                F_prev = A_prev = A_max = W_prev = X_prev = 0
             else:
                 W_prev = open_before["W"]
             r = h.swap(PID, bkey, tkey, d0[i], d1[i], ref[i], basefee=bf[i], settle_token0=settle0)
@@ -153,7 +158,11 @@ def replay(al: pd.DataFrame, key: str, kappa_const: np.ndarray, gas_units: int, 
             if same:
                 R["esc"][i] = max(min(F, W_prev) - F_prev, 0)
                 R["esc_s"][i] = max(min(A, A_max) - A_prev, 0)
-            F_prev, A_prev, A_max = F, A, max(A_max, A)
+            X = s["cum0"] + fp._div_trunc(s["cum1"] * s["ref"], WAD)     # signed cumulative surplus (A = [X]^+)
+            R["X"][i] = X
+            if same:
+                R["net_s"][i] = max(min(X, 0) - X_prev, 0)          # refills a negative X left by a counter-trade
+            F_prev, A_prev, A_max, X_prev = F, A, max(A_max, A), X
     return res
 
 
@@ -168,6 +177,10 @@ def summarize(df: pd.DataFrame, key: str, variant: str, setting: str) -> list[di
         tipped = feas & (r > M)
         spill = ch & (df["r_standalone_usd"].to_numpy() == 0)
         tot = r.sum()
+        sa = df["r_standalone_usd"].to_numpy()
+        sa_tot = sa.sum()
+        net = df[f"nets_{sc}_usd"].to_numpy() > 0
+        short = np.clip(sa - r, 0, None)
         rows.append({
             "pool": key, "variant": variant, "primary": (key, variant) in PRIMARY, "setting": setting, "scope": sc,
             "n_swaps": len(df), "n_arb": int(arb.sum()), "n_feasible_standalone": int(feas.sum()),
@@ -184,9 +197,18 @@ def summarize(df: pd.DataFrame, key: str, variant: str, setting: str) -> list[di
             "b_n_spillover": int(spill.sum()), "b_share_spillover_of_charged": spill.sum() / ch.sum() if ch.any() else np.nan,
             "b_spillover_usd": float(r[spill].sum()), "b_n_spillover_nonarb": int((spill & ~arb).sum()),
             # c. escaped transfer (reversal leak)
-            "c_escaped_charge_usd": float(df[f"esc_{sc}_usd"].sum()),
-            "c_escaped_share_of_transfer": float(df[f"esc_{sc}_usd"].sum()) / tot if tot > 0 else np.nan,
-            "c_escaped_surplus_usd": float(df[f"escs_{sc}_usd"].sum()), "c_n_swaps_with_escape": int((df[f"esc_{sc}_usd"] > 0).sum()),
+            # c1. reversal leak: surplus re-created below the positive running maximum (watermark), uncharged
+            "c1_escaped_charge_usd": float(df[f"esc_{sc}_usd"].sum()),
+            "c1_escaped_share_of_transfer": float(df[f"esc_{sc}_usd"].sum()) / tot if tot > 0 else np.nan,
+            "c1_escaped_share_of_standalone_transfer": float(df[f"esc_{sc}_usd"].sum()) / sa_tot if sa_tot > 0 else np.nan,
+            "c1_escaped_surplus_usd": float(df[f"escs_{sc}_usd"].sum()), "c1_n_swaps": int((df[f"escs_{sc}_usd"] > 0).sum()),
+            # c2. netting: surplus that refills a negative signed cumulative surplus left by an earlier counter-trade in
+            # the scope; charge units = shortfall against the standalone charge of those swaps
+            "c2_netted_surplus_usd": float(df[f"nets_{sc}_usd"].sum()), "c2_n_swaps": int(net.sum()),
+            "c2_charge_shortfall_usd": float(short[net].sum()),
+            "c2_shortfall_share_of_transfer": float(short[net].sum()) / tot if tot > 0 else np.nan,
+            "c2_shortfall_share_of_standalone_transfer": float(short[net].sum()) / sa_tot if sa_tot > 0 else np.nan,
+            "c2_shortfall_arb_usd": float(short[net & arb].sum()), "c2_n_charged_standalone": int((net & (sa > 0)).sum()),
             # d. charges paid by non-arbitrage swaps
             "d_n_charged_nonarb": int((ch & ~arb).sum()), "d_charge_nonarb_usd": float(r[ch & ~arb].sum()),
             "d_share_transfer_nonarb": float(r[ch & ~arb].sum()) / tot if tot > 0 else np.nan,
@@ -241,10 +263,12 @@ def main():
                 df[f"F_{sc}_usd"] = np.array(R["F"], dtype=float) * to_usd
                 df[f"esc_{sc}_usd"] = np.array(R["esc"], dtype=float) * to_usd
                 df[f"escs_{sc}_usd"] = np.array(R["esc_s"], dtype=float) * to_usd
+                df[f"nets_{sc}_usd"] = np.array(R["net_s"], dtype=float) * to_usd
+                df[f"X_{sc}_usd"] = np.array(R["X"], dtype=float) * to_usd
                 df[f"failed_open_{sc}"] = R["failed_open"]
                 df[f"after_fail_{sc}"] = R["after_fail"]
             # checks: standalone scopes have no spillover and no escape; tx and block coincide on one-swap blocks
-            assert (df["esc_standalone_usd"] == 0).all()
+            assert (df["esc_standalone_usd"] == 0).all() and (df["nets_standalone_usd"] == 0).all()
             one = df.groupby("block")["log_index"].transform("size") == 1
             assert (df.loc[one, "r_block_usd"] == df.loc[one, "r_standalone_usd"]).all()
             summ += summarize(df, key, var, setting)

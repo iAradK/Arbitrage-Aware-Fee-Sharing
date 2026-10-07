@@ -55,3 +55,9 @@ test/*:*:*
 # LaTeX build directories (paper/build.sh)
 build/
 build_*/
+
+# local credentials (data/secrets_local.py)
+data/.secrets.env
+
+# Claude Code session worktrees
+.claude/

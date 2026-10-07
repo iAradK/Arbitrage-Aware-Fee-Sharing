@@ -87,9 +87,13 @@ class ScopedHookReference:
     The transaction-scoped contract treats an invalid oracle at the first swap as disabling the pool for the rest
     of the transaction, and it has no uint128/int128 limits; neither difference matters for the checks here.
 
+    The final hook (ParticipationAwareHook.sol, S1) is scope="block", accumulation="tx_clip", buffer="rel", with
+    eps_wad = its locked eps_rel in parts per billion x 1e9 and tau_wei = 3 gwei; the earlier block-scoped hook was
+    accumulation="net", buffer="none".
+
     `accumulation` selects how the scope's surplus A is accumulated (the watermark and settlement are unchanged):
-      - "net" (the deployed hook): A = [pi . (sum of all deltas in the scope)]^+;
-      - "tx_clip" (V1, block scope only): A = sum over the completed transactions of the block of
+      - "net" (the earlier block-scoped hook): A = [pi . (sum of all deltas in the scope)]^+;
+      - "tx_clip" (V1, block scope only; the final hook): A = sum over the completed transactions of the block of
         [pi . (deltas of that transaction)]^+, plus [pi . (running deltas of the current transaction)]^+. A swap
         whose transaction differs from the previous swap's folds the previous transaction into the sum;
       - "swap_clip" (V2): A = sum over the scope's swaps of [pi . (deltas of that swap)]^+.
@@ -97,7 +101,7 @@ class ScopedHookReference:
     uint128; leaving that range saturates W like the other limits.
 
     `buffer` selects a proportional buffer deducted inside each bracket (kappa then holds no delta):
-      - "none" (the deployed hook): nothing;
+      - "none" (the earlier block-scoped hook): nothing;
       - "abs": ceil(eps * g / WAD), eps = `eps_wad`, a price bound in token0 per token1 base unit, WAD-scaled like
         the reference;
       - "rel": ceil(eps * ref * g / WAD^2), eps = `eps_wad` a relative price bound (WAD = 100%).

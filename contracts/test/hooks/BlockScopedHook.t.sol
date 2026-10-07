@@ -225,13 +225,22 @@ contract BlockScopedHookTest is BlockScopedHookTestBase {
         uint256 unsplitCharge = _vault(currency0) - v0;
         assertEq(unsplitCharge, hu.getScope(unsplitId).watermark);
 
-        uint256 splitCharge = _runSplit(splitKey, n, manySenders, 0);
-        uint256 oldCharge = _runSplit(oldKey, n, manySenders, 100);
+        _refInit();
+        (uint256 splitCharge, uint256[] memory r) = _runSplit(splitKey, n, manySenders, 0, true);
+        (uint256 oldCharge,) = _runSplit(oldKey, n, manySenders, 100, false);
 
-        // Theorem 1(a) exactly: the fragments pay F(A) of their own net delta.
+        // expected charges from ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel")
+        // on the recorded split fragments (each its own transaction under --isolate)
+        RefOut memory e = _refRun(h);
+        uint256 expectedTotal;
+        for (uint256 j; j < n; ++j) {
+            assertEq(r[j], e.w[j], "fragment charge = reference");
+            expectedTotal += e.w[j];
+        }
         ParticipationAwareHook.Scope memory s = h.getScope(splitId);
         assertEq(s.blockNumber, block.number, "all fragments in one block");
-        assertEq(splitCharge, _F(h, s, _scopeSurplus(s)), "sum of charges = F(A) of the net delta");
+        assertEq(splitCharge, expectedTotal, "sum of charges = reference total");
+        assertEq(h.scopeSurplus(splitId), e.surplus[n - 1], "block surplus = reference");
         assertEq(splitCharge, s.watermark);
         // Against the unsplit swap: the net deltas differ only by the pool's per-swap
         // rounding of the input (at most a few base units per fragment).
@@ -247,15 +256,22 @@ contract BlockScopedHookTest is BlockScopedHookTestBase {
         );
     }
 
-    function _runSplit(PoolKey memory key, uint256 n, bool manySenders, uint256 actorOffset)
+    /// @dev Runs the n fragments; with `record`, each goes into the reference trace (locked price
+    /// 1.2) and r holds the per-fragment charges.
+    function _runSplit(PoolKey memory key, uint256 n, bool manySenders, uint256 actorOffset, bool record)
         internal
-        returns (uint256 charged)
+        returns (uint256 charged, uint256[] memory r)
     {
+        r = new uint256[](n);
         uint256 v0 = _vault(currency0);
         for (uint256 j; j < n; ++j) {
             IPoolManager.SwapParams memory p = _exactOut(true, SPLIT_OUT / n);
-            if (manySenders) _swapAs(_actor(actorOffset + j), key, p);
+            address who = manySenders ? _actor(actorOffset + j) : address(0);
+            uint256 vj = _vault(currency0);
+            if (record) _swapRec(who, key, p, 1.2e18);
+            else if (manySenders) _swapAs(who, key, p);
             else _swap(key, p);
+            r[j] = _vault(currency0) - vj;
         }
         charged = _vault(currency0) - v0;
     }

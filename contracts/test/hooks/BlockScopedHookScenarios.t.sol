@@ -238,12 +238,25 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
         _swap(twinPool, _exactOut(true, total));
         uint256 unsplit = _vault(currency0) - v0;
 
+        _refInit();
+        uint256[] memory r = new uint256[](n);
         v0 = _vault(currency0);
         for (uint256 j; j < n; ++j) {
-            if (manySenders) _swapAs(_actor(j), pool, _exactOut(true, parts[j]));
-            else _swap(pool, _exactOut(true, parts[j]));
+            address who = manySenders ? _actor(j) : address(0);
+            uint256 vj = _vault(currency0);
+            _swapRec(who, pool, _exactOut(true, parts[j]), 1.2e18);
+            r[j] = _vault(currency0) - vj;
         }
         uint256 split = _vault(currency0) - v0;
+        // expected charges from ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel")
+        RefOut memory e = _refRun(hook);
+        uint256 expectedTotal;
+        for (uint256 j; j < n; ++j) {
+            assertEq(r[j], e.w[j], "fragment charge = reference");
+            expectedTotal += e.w[j];
+        }
+        assertEq(split, expectedTotal, "sum of charges = reference total");
+        assertEq(hook.scopeSurplus(poolId), e.surplus[n - 1], "block surplus = reference");
 
         v0 = _vault(currency0);
         for (uint256 j; j < n; ++j) {
@@ -252,8 +265,6 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
         }
         uint256 txScoped = _vault(currency0) - v0;
 
-        ParticipationAwareHook.Scope memory s = hook.getScope(poolId);
-        assertEq(split, _F(hook, s, _scopeSurplus(s)), "sum of charges = F(A) of the net delta");
         uint256 diff = split > unsplit ? split - unsplit : unsplit - split;
         assertLe(diff, 4 * uint256(n), "equal to the unsplit charge up to AMM rounding");
         if (n == 1) assertEq(txScoped, split, "one transaction: both scopes agree");

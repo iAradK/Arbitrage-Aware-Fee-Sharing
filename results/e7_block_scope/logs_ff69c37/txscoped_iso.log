@@ -1,0 +1,49 @@
+# commit ff69c37 (ff69c37737e1645df8be9f1326d66cfe883dae34); 2026-10-07T13:57:32Z; forge Version: 1.5.1-stable
+# forge test --offline --isolate --match-contract '^(TxScopedParticipationAwareHookTest|HookGasIsolatedTest|HookGasSettledTest)$' 
+No files changed, compilation skipped
+
+Ran 3 tests for test/hooks/HookGasSettled.t.sol:HookGasSettledTest
+[PASS] test_charged_hook() (gas: 240439)
+[PASS] test_no_hook() (gas: 171092)
+[PASS] test_uncharged_hook() (gas: 209118)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 36.02ms (1.59ms CPU time)
+
+Ran 10 tests for test/hooks/HookGasIsolated.t.sol:HookGasIsolatedTest
+[PASS] test_n01_base() (gas: 173694)
+[PASS] test_n01_hook() (gas: 204176)
+[PASS] test_n02_base() (gas: 308132)
+[PASS] test_n02_hook() (gas: 369032)
+[PASS] test_n04_base() (gas: 577109)
+[PASS] test_n04_hook() (gas: 698647)
+[PASS] test_n08_base() (gas: 1115354)
+[PASS] test_n08_hook() (gas: 1358300)
+[PASS] test_n16_base() (gas: 2191047)
+[PASS] test_n16_hook() (gas: 2678239)
+Suite result: ok. 10 passed; 0 failed; 0 skipped; finished in 48.06ms (18.76ms CPU time)
+
+Ran 9 tests for test/hooks/TxScopedParticipationAwareHook.t.sol:TxScopedParticipationAwareHookTest
+[PASS] testFuzz_BoundaryLimits_ExtremeMarginAndDeltaParameters(uint256,uint256,uint256,uint256,uint256) (runs: 256, μ: 30302006, ~: 14857190)
+[PASS] testFuzz_ConstructorRejectsInvalidLambdaGamma(uint256,uint256) (runs: 256, μ: 25832668, ~: 9582720)
+[FAIL: assertion failed: 0 != 1; counterexample: calldata=0x3e3b9dcf0000000000000000000000000000000000000000000000000000002d56fcb13a000000000000000000000000000000000000002f751c24a47b9590689278481f args=[194732929338 [1.947e11], 3759967407281835043566854359071 [3.759e30]]] testFuzz_CrossPoolIsolationThroughRealSwaps(uint256,uint256) (runs: 0, μ: 0, ~: 0)
+[FAIL: assertion failed: 0 != 1; counterexample: calldata=0xb4cbdce50000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000c0 args=[0, true, 192]] testFuzz_InvalidOracleStates_FailOpenNeverBlocksOrOvercharges(uint8,bool,uint256) (runs: 0, μ: 0, ~: 0)
+[FAIL: collected value within watermark: 12007886683086976940400000000000000000 > 0; counterexample: calldata=0x2f3ccb4f0000000000000000000000000000000000000000000000000000000000000007 args=[7]] testFuzz_Settlement_FragmentsNeverOvercollect(uint8) (runs: 0, μ: 0, ~: 0)
+[PASS] testFuzz_TickCrossing_ChargeMonotoneInSwapSize(uint8,uint256) (runs: 256, μ: 752616, ~: 730628)
+[FAIL: assertion failed: 0 != 1] test_DirectionMapping_MatchesZeroForOneFlag() (gas: 208377)
+[FAIL: scenario must produce a positive charge: 0 <= 0] test_Settlement_ExactInput_ChargesOutputTokenToVault() (gas: 279319)
+[FAIL: scenario must produce a positive charge: 0 <= 0] test_Settlement_ExactOutput_ChargesInputTokenToVault() (gas: 278400)
+Suite result: FAILED. 3 passed; 6 failed; 0 skipped; finished in 5.14s (10.24s CPU time)
+
+Ran 3 test suites in 5.16s (5.23s CPU time): 16 tests passed, 6 failed, 0 skipped (22 total tests)
+
+Failing tests:
+Encountered 6 failing tests in test/hooks/TxScopedParticipationAwareHook.t.sol:TxScopedParticipationAwareHookTest
+[FAIL: assertion failed: 0 != 1; counterexample: calldata=0x3e3b9dcf0000000000000000000000000000000000000000000000000000002d56fcb13a000000000000000000000000000000000000002f751c24a47b9590689278481f args=[194732929338 [1.947e11], 3759967407281835043566854359071 [3.759e30]]] testFuzz_CrossPoolIsolationThroughRealSwaps(uint256,uint256) (runs: 0, μ: 0, ~: 0)
+[FAIL: assertion failed: 0 != 1; counterexample: calldata=0xb4cbdce50000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000c0 args=[0, true, 192]] testFuzz_InvalidOracleStates_FailOpenNeverBlocksOrOvercharges(uint8,bool,uint256) (runs: 0, μ: 0, ~: 0)
+[FAIL: collected value within watermark: 12007886683086976940400000000000000000 > 0; counterexample: calldata=0x2f3ccb4f0000000000000000000000000000000000000000000000000000000000000007 args=[7]] testFuzz_Settlement_FragmentsNeverOvercollect(uint8) (runs: 0, μ: 0, ~: 0)
+[FAIL: assertion failed: 0 != 1] test_DirectionMapping_MatchesZeroForOneFlag() (gas: 208377)
+[FAIL: scenario must produce a positive charge: 0 <= 0] test_Settlement_ExactInput_ChargesOutputTokenToVault() (gas: 279319)
+[FAIL: scenario must produce a positive charge: 0 <= 0] test_Settlement_ExactOutput_ChargesInputTokenToVault() (gas: 278400)
+
+Encountered a total of 6 failing tests, 16 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 6 failed tests

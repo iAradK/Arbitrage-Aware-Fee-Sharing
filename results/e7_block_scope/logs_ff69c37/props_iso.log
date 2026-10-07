@@ -1,0 +1,18 @@
+# commit ff69c37 (ff69c37737e1645df8be9f1326d66cfe883dae34); 2026-10-07T13:48:10Z; forge Version: 1.5.1-stable
+# forge test --offline --isolate --match-contract '^BlockScopeV1PropertiesTest$' --ffi
+Compiling 1 files with Solc 0.8.26
+Solc 0.8.26 finished in 22.59s
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+   --> test/hooks/BlockScopedHookTestBase.sol:336:5:
+    |
+336 |     function _F(ParticipationAwareHook hook, ParticipationAwareHook.Scope memory s, uint256 a) internal view returns (uint256 t) {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+Ran 2 tests for test/hooks/BlockScopeV1Properties.t.sol:BlockScopeV1PropertiesTest
+[PASS] testFuzz_SplitsWithinABlockPayTheUnsplitCharge(uint256,uint8) (runs: 257, μ: 6133375, ~: 6107145)
+[PASS] testFuzz_UnrelatedNegativeTransactionNeverLowersCharges(uint256,uint8) (runs: 256, μ: 4483011, ~: 4514951)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 210.90ms (416.62ms CPU time)
+
+Ran 1 test suite in 217.98ms (210.90ms CPU time): 2 tests passed, 0 failed, 0 skipped (2 total tests)

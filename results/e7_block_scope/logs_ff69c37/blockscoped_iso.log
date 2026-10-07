@@ -1,0 +1,25 @@
+# commit ff69c37 (ff69c37737e1645df8be9f1326d66cfe883dae34); 2026-10-07T13:58:10Z; forge Version: 1.5.1-stable
+# forge test --offline --isolate --match-contract '^BlockScopedHookTest$' --ffi
+No files changed, compilation skipped
+
+Ran 17 tests for test/hooks/BlockScopedHook.t.sol:BlockScopedHookTest
+[PASS] testFuzz_BoundaryLimits_ExtremeMarginAndDeltaParameters(uint16,uint16,uint256,uint256,uint256) (runs: 256, μ: 31125971, ~: 12542458)
+[PASS] testFuzz_ConstructorRejectsInvalidLambdaGamma(uint16,uint16) (runs: 256, μ: 25594275, ~: 11460322)
+[PASS] testFuzz_CrossPoolIsolationThroughRealSwaps(uint256,uint256) (runs: 256, μ: 587257, ~: 587403)
+[PASS] testFuzz_InvalidOracleStates_FailOpenNeverBlocksOrOvercharges(uint8,bool,uint256) (runs: 256, μ: 263668, ~: 263520)
+[PASS] testFuzz_Settlement_FragmentsNeverOvercollect(uint8) (runs: 256, μ: 1393979, ~: 1194230)
+[PASS] testFuzz_TickCrossing_ChargeMonotoneInSwapSize(uint8,uint256) (runs: 256, μ: 835908, ~: 824902)
+[PASS] test_RollResetsScope() (gas: 796557)
+[PASS] test_RunsIsolated() (gas: 27924)
+[PASS] test_ScopeLocksParameters() (gas: 347826)
+[PASS] test_Settlement_ExactInput_ChargesOutputTokenToVault() (gas: 382833)
+[PASS] test_Settlement_ExactOutput_ChargesInputTokenToVault() (gas: 381408)
+[PASS] test_TxSplit_2_ManySenders() (gas: 173422555)
+[PASS] test_TxSplit_2_OneSender() (gas: 172578848)
+[PASS] test_TxSplit_4_ManySenders() (gas: 174875835)
+[PASS] test_TxSplit_4_OneSender() (gas: 173207149)
+[PASS] test_TxSplit_8_ManySenders() (gas: 177846610)
+[PASS] test_TxSplit_8_OneSender() (gas: 174527536)
+Suite result: ok. 17 passed; 0 failed; 0 skipped; finished in 5.75s (13.00s CPU time)
+
+Ran 1 test suite in 5.76s (5.75s CPU time): 17 tests passed, 0 failed, 0 skipped (17 total tests)

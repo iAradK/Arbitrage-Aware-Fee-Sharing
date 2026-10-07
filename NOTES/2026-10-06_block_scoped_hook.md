@@ -268,3 +268,159 @@ They check internal consistency (charges = F of the stored state), not reference
 - the 2,000-run fuzz (multi-swap transactions over several blocks).
 
 Results and gas: `results/e7_block_scope/` (`conformance_counts_v1.json`, `fuzz_v1_*.csv`) and `results/gas/gas_cold.csv`.
+
+## 10. Gas: the current transaction in transient storage (S2, 2026-10-07)
+
+Commits on branch `claude/s2-gas-transient-ec0481`, cut from 3d163c0:
+
+| commit | content |
+|---|---|
+| 24c855a | hook change; tests that read the transaction's fields from a later transaction; new quote-in-transaction test |
+| c6303a4 | the two remaining split tests take their expected charges from the reference |
+| f6db88f | the older suites write their output files only when the output variable is set |
+| 27fef0a | two gas scenarios in which the block surplus changes without a charge |
+
+Every number below was measured on 27fef0a (clean), unless it says otherwise.
+
+**Change.** The current transaction's state moves to transient storage, keyed `keccak256("ParticipationAwareHook.tx", poolId) + k`:
+- T0: the net deltas, int128 | int128;
+- T1: the gross token1 volume, uint128, with the transaction flag at bit 128;
+- T2: closed, the sum of the earlier transactions' brackets.
+
+Persistent slots B and D become one slot P = closed + the current transaction's clipped bracket, i.e. the block surplus A. P is rewritten on every swap. A transaction's first swap in an open scope takes closed := P. P carries a marker bit (bit 255; A < 2^197), so after the pool's first swap it is never zero and every write is nonzero to nonzero. Without the marker, `charged_vault_empty` measured 12.4k more than before: P went from 0 to nonzero, a 22,100-gas SSTORE.
+
+Unchanged:
+- every charge;
+- the saturation triggers: closed (now P at a transaction's first swap) or gross above 2^128 − 1, the int128 deltas, the target, the settlement;
+- ε stays a storage variable, locked at scope open;
+- every uint128/int128 limit.
+
+**`getScope`.** The current transaction's fields (`cumulativeDelta0/1`, `txGross1`) are transient.
+- Inside the transaction that swapped, they hold its running values, and `closedSurplus` holds the earlier brackets.
+- Anywhere else, including every later call under `--isolate`, they read 0 and `closedSurplus` = P, the whole block surplus.
+
+In both cases `closedSurplus` + the bracket of the current fields = `scopeSurplus()`, which now returns P. `closedSurplus` widened from uint128 to uint256, because P can exceed 2^128 − 1 until the next transaction saturates. `quote()` reads the transient state, so it stays exact inside a transaction. The new `BlockScopeBoundaryTest.test_QuoteWithinATransactionEqualsTheCharge` checks this in both modes: before each of 6 swaps in 2 transactions, with the buffer on, `quote()` read inside the same transaction equals the swap's charge, and every charge equals the reference.
+
+### Gas (cold, `--isolate`, overhead = with hook − without)
+
+How it was measured:
+- **After:** 27fef0a, from `python experiments/gas_cold_table.py`.
+- **Before:** the hook at 3d163c0, which is identical to ff69c37's. It was measured with the same gas test file, from 27fef0a, in a scratch copy of 3d163c0's contracts. For every older scenario this run reproduces the committed ff69c37 `results/gas/gas_cold.csv` exactly.
+- **Where the table lives:** by the user's instruction, no result file is committed. The tracked `results/gas/gas_cold.csv` still holds the ff69c37 figures. The new table is the local, untracked `results/e7_block_scope/logs_27fef0a/outputs/gas_cold.csv`; the figures below are copied from it.
+
+| scenario | before | after | change |
+|---|---:|---:|---:|
+| first swap of a block, no charge, P unchanged (0 → 0) (`new_block`) | 43,341 | 35,901 | −7,440 |
+| first swap of a block, no charge, P changes (`new_block_positive_surplus`) | 43,336 | 38,696 | −4,640 |
+| first swap of a 2nd transaction, no charge, P unchanged (`second_tx`) | 25,913 | 17,240 | −8,673 |
+| first swap of a 2nd transaction, no charge, P changes (`second_tx_positive_surplus`) | 25,903 | 20,035 | −5,868 |
+| 1st swap of a two-swap transaction (`first_in_multi_tx`) | 43,341 | 35,901 | −7,440 |
+| 2nd swap in one transaction (`second_in_tx`) | 9,292 | 9,066 | −226 |
+| charged, vault holds the token (`charged`) | 56,977 | 52,337 | −4,640 |
+| charged, vault empty (`charged_vault_empty`) | 74,077 | 69,437 | −4,640 |
+| charged 2nd transaction (`charged_second_tx`) | 42,448 | 36,580 | −5,868 |
+| charged after another sender's transaction (`charged_after_other_tx`) | 42,461 | 36,593 | −5,868 |
+| invalid oracle, first / 2nd swap of a transaction | 20,171 / 7,171 | 20,161 / 7,161 | −10 |
+| first swap a pool ever sees, no charge / charged | 111,741 / 142,464 | 90,001 / 120,724 | −21,740 |
+
+The transaction-scoped hook is unchanged: 30,214 for a first swap and 44,707 for a charged swap. It measures 30,198 in the two new scenarios.
+
+The extra arbitrage transaction (21,000 + the swap without a hook + the overhead) at the study window's median of 5.449e-7 USD/gas:
+
+| case | cost |
+|---|---|
+| in the same block, no charge | 138,276–141,071 gas (0.0753–0.0769 USD) |
+| in the same block, charged | 157,616 gas (0.0859 USD) |
+| in a new block, no charge | 156,937–159,732 gas (0.0855–0.0870 USD) |
+| in a new block, charged | 173,373 gas (0.0945 USD) |
+
+### Where the saving comes from
+
+Storage cost schedule (EIP-2929/2200), checked against the measured differences:
+
+| scenario | before | after | derived | measured |
+|---|---|---|---:|---:|
+| first swap of a block, P changes | SSTORE B and D cold, changed (2 × 5,000); TLOAD + TSTORE flag (200) | SSTORE P cold, changed (5,000); 3 TSTORE (300) | −4,900 | −4,640 |
+| first swap of a block, P unchanged (0 → 0) | as above | SSTORE P cold, unchanged (2,200); 3 TSTORE (300) | −7,700 | −7,440 |
+| 2nd transaction, P changes | SLOAD B, D cold (2 × 2,100) + SSTORE B, D (2 × 2,900) + flag (200); fold: the previous transaction's bracket recomputed | SLOAD P cold (2,100) + SSTORE P (2,900) + TLOAD T1 + 3 TSTORE (400) | −4,800 − fold | −5,868 |
+| 2nd transaction, P unchanged | as above | SSTORE P unchanged (100) | −7,600 − fold | −8,673 |
+| 2nd swap in a transaction | 4 warm SLOAD + 2 dirty SSTORE + flag | 3 TLOAD + 2 TSTORE + 1 dirty SSTORE | ≈ −200 | −226 |
+| first swap a pool ever sees | B and D zero → nonzero (2 × 22,100) | P zero → nonzero (22,100) + 3 TSTORE | −21,800 | −21,740 |
+
+The remaining differences, about +260 per swap, come from the extra masking and transient-slot arithmetic. In the second-transaction rows they also cover the fold the hook no longer computes: about 1.1k with ε ≠ 0, including the mulDivRoundingUp.
+
+The estimate of about 4.9k holds when P changes: the first swap of a block saves 4,640 (43,336 → 38,696), and a charged one saves the same. A second transaction saves 5,868, which includes the fold, about 1.1k. When the uncharged swap's bracket clips to 0, as in `new_block` and `second_tx`, P is rewritten unchanged, so the saving is about 2.8k larger. The old slot D always changed, because it held the gross volume. Of the +8,782 that the S1 design added over fcb66ae, this recovers the slot-D write (5,000). It does not recover the cold read of `epsilonRelPpb` (2,100, kept as a storage variable), the κ gas term (510) or the buffer arithmetic (416).
+
+### Tests
+
+**Updated because they read the transaction's fields from a later transaction (`getScope` layout).** Each one now compares P with the swap's own bracket, or takes the swap's core delta from its PoolManager `Swap` event (`_swapRec` / `_lastRef`). In the non-isolated mode, the original field checks are kept.
+- `BlockScopedHookTest`:
+  - `test_Settlement_ExactInput_ChargesOutputTokenToVault` and `..._ExactOutput_...`: the swapper delta is checked against the core delta from the `Swap` event, not against `cumulativeDelta`;
+  - `test_RollResetsScope`: P = the bracket of the new block's swap alone.
+- `BlockScopedHookScenariosTest`:
+  - `test_InvalidOracleOnFirstSwapThenValid`: P = the second swap's bracket;
+  - `test_OracleUpdateMidBlockDoesNotMoveLockedReference`: `_lastDelta` (which read `cumulativeDelta`) is replaced by `_lastRef`, the `Swap` event's core delta, read before the revert.
+- `BlockScopeBoundaryTest`:
+  - `test_NewBlockResetsAccumulatorAndRelocksReferenceAndKappa` and `test_InvalidOracleChargesNothingAndRetriesWhenValidAgain`: `scopeSurplus` = the own swap's bracket in both modes; the field checks only without `--isolate`;
+  - `test_MidBlockOracleUpdateDoesNotMoveLockedReference` (isolated branch): `closedSurplus` = Alice's folded bracket + Bob's bracket, and the transaction fields read 0;
+  - `test_OverflowClosedSurplusSaturates`: after transaction 2, P = 2^128 − 2 + 1e18 (transaction 1 folded plus transaction 2's bracket), where the old D held 2^128 − 2. Saturation still triggers at transaction 3.
+- Helpers in `BlockScopedHookTestBase`: `_txBracket`, `_lastRef`. In `DeltaManager`: `quoteAndSwapMany`.
+
+No charge expectation changed. The suites that do not read those fields pass unmodified: conformance (3 modes), fuzz (iso and no-iso), V1 properties, the base-fee test and `ParticipationAwareHookFeeTest`.
+
+**The two remaining self-checking split tests now use the reference.** `BlockScopedHookTest._txSplit` (the six `test_TxSplit_*`) and `BlockScopedHookScenariosTest.testFuzz_RandomTxSplits` record each split fragment with `_swapRec`. They assert:
+- every fragment's charge = the reference's w_j;
+- the total = Σ w_j;
+- the final `scopeSurplus` = the reference's A.
+
+The unsplit comparison (within 4n wei) and the transaction-scoped comparison stay. No test in section 9's list now uses `_F(hook, s, _scopeSurplus(s))` for a multi-transaction expectation.
+
+**Negative control (27fef0a + a temporary edit).** `_refRun` passed `kappaConstant() + 0.1e18` to the reference; the edit was restored byte for byte, and git confirmed a clean tree. These fail on the reference equalities:
+- `--isolate`, `BlockScopedHookTest`: all six `test_TxSplit_*` ("fragment charge = reference");
+- `--isolate`, `BlockScopedHookScenariosTest`: `testFuzz_RandomTxSplits`, plus `test_ReversalAcrossTransactions`, `test_OracleUpdateMidBlockDoesNotMoveLockedReference` and `testFuzz_SpilloverBound`;
+- `BlockScopeBoundaryTest`, both modes: `test_MidBlockOracleUpdateDoesNotMoveLockedReference`, `test_NewBlockResetsAccumulatorAndRelocksReferenceAndKappa` and the new `test_QuoteWithinATransactionEqualsTheCharge`.
+
+Unaffected, as they should be:
+- the two int128 overflow tests: their charge before saturation is λa with a ≈ 2^127, or 0;
+- `BlockScopeV1PropertiesTest` (2/2): it compares two hooks with each other, not with the reference;
+- the remaining tests, which do not call the reference.
+
+So both converted tests are sensitive to the reference. So are all seven tests from section 9 that can be: the five charge tests plus the two overflow tests, which check saturation flags.
+
+**Test outputs.** The older suites no longer write to `results/e7` or `contracts/results` by default. They write only when their variable is set:
+
+| suite | variable |
+|---|---|
+| `E7ConformanceTest` | `E7_COUNTS` |
+| `E7GasProfileTest` | `E7_GAS_CSV` |
+| `HookGasBenchmarkTest` | `HOOK_LIFECYCLE_GAS_OUTPUT` |
+| `CumulativeSurplusAccountingTest` | `CUMULATIVE_GAS_OUTPUT` |
+| `SurplusSharingAccountingTest` | `GAS_OUTPUT` |
+
+`experiments/e7_solidity_conformance.py --forge` now sets `E7_COUNTS` and `E7_GAS_CSV` explicitly; it relied on their defaults. It already set `HOOK_LIFECYCLE_GAS_OUTPUT`. All three paths are relative to its output directory.
+
+Checked in a scratch copy of 27fef0a's contracts, with the gitignored inputs as read-only copies:
+- With no variable set, the five suites pass 23/23 and write no file.
+- With every variable set, they pass 23/23 and write all five outputs into the scratch tree.
+- The main checkout's `results/e7` and `contracts/results` (88 files) hash identically before and after.
+
+Not changed: `BlockScopeConformanceTest` and `BlockScopeFuzzTest` still write fixed paths in `results/e7_block_scope/`. The reruns copied those files into the log folder and restored the tracked ones.
+
+**Suite results on 27fef0a (clean).**
+
+| suite | mode | result |
+|---|---|---|
+| `BlockScopeConformanceTest` | `--isolate` | 360 fragments per mode; mismatches a/b/c 0/0/0; charged 90/119/87. The counts JSON matches ff69c37's. |
+| `BlockScopedHookTest` | `--isolate --ffi` | 17/17 |
+| `BlockScopedHookScenariosTest` | `--isolate --ffi` | 6/6 |
+| `BlockScopeBoundaryTest` | `--isolate --ffi` | 12/12 |
+| `BlockScopeV1PropertiesTest` | `--isolate --ffi` | 2/2 |
+| `BlockScopeFuzzTest`, 2,000 runs | `--isolate` | pass; every row 0 mismatches |
+| `BlockScopeFuzzTest`, 2,000 runs | no isolation | pass; every row 0 mismatches |
+| `BlockScopedHookGasTest` | `--isolate` | 39/39 |
+| `BlockScopeBoundary*`, including the base-fee test | no isolation | 12 pass, 1 skipped (the closed-surplus overflow needs separate transactions) |
+| `ParticipationAwareHookFeeTest` | no isolation | 3/3 |
+| `TxScopedParticipationAwareHookTest`, `HookGasIsolatedTest`, `HookGasSettledTest` | no isolation | 22/22 |
+| the five older suites | scratch copy | 23/23 |
+
+Logs, outputs and run scripts are local and untracked, in `results/e7_block_scope/logs_27fef0a/` (README there): the logs, `negative_control/`, `outputs/` (the new `gas_cold.csv`, conformance counts, fuzz CSVs) and `scripts/`.

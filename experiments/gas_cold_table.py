@@ -43,6 +43,9 @@ SCENARIOS = {  # name: (description, starts a transaction)
     "invalid_second_in_tx": ("2nd swap of that transaction, stale oracle", False),
     "charged_after_other_tx": ("charged transaction after another sender's uncharged transaction in the same block "
                                "(V1: folds the earlier transaction), vault holds the token", True),
+    "new_block_positive_surplus": ("new_block with a positive bracket below kappa, no charge (block surplus slot P changes, "
+                                   "nonzero to nonzero; in new_block it stays 0)", True),
+    "second_tx_positive_surplus": ("second_tx with a positive bracket below kappa, no charge (P changes)", True),
 }
 
 

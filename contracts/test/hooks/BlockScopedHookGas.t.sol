@@ -9,6 +9,7 @@ import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 
 import {BlockScopedHookTestBase, SwapProbe} from "./BlockScopedHookTestBase.sol";
 import {MockOracle} from "../../src/mocks/MockOracle.sol";
+import {ParticipationAwareHook} from "../../src/hooks/ParticipationAwareHook.sol";
 
 /// @notice Gas of the block-scoped hook against the transaction-scoped contract and a pool without a hook, scenario by scenario. Run with
 /// `forge test --isolate`: every probe call is its own transaction, so storage and
@@ -35,6 +36,11 @@ import {MockOracle} from "../../src/mocks/MockOracle.sol";
 ///   charged_after_other_tx  charged transaction after another sender's uncharged transaction
 ///                 in the same block (block scope V1: its first swap folds the earlier
 ///                 transaction's bracket into the block total)
+///   new_block_positive_surplus  new_block on the 1.2-reference pool with the small swap: its
+///                 bracket is positive but below kappa (no charge), so the block surplus slot P
+///                 is rewritten with a new nonzero value. In new_block and second_tx the
+///                 uncharged swap's bracket clips to 0, so P is rewritten unchanged (0 -> 0).
+///   second_tx_positive_surplus  second_tx on that pool: P grows by the second bracket
 /// The block-scoped hook runs in the evaluated configuration (_finalParams: V1 with the
 /// relative buffer eps_rel = 0.283%, g_hat = 180,214, tau_hat = 3 gwei, gamma = 0.02).
 contract BlockScopedHookGasTest is BlockScopedHookTestBase {
@@ -47,6 +53,7 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
 
     SwapProbe internal probe;
     SwapProbe internal other; // a second sender
+    ParticipationAwareHook internal bs; // the block-scoped variant
     mapping(uint256 => PoolKey) internal uncharged;
     mapping(uint256 => PoolKey) internal charged;
 
@@ -57,7 +64,7 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
         probe = _probe();
         other = _probe();
         IHooks[3] memory hooks = [
-            IHooks(address(_deployHook(_finalParams(K_HAT)))),
+            IHooks(address(bs = _deployHook(_finalParams(K_HAT)))),
             IHooks(address(_deployTxScopedHook(K_HAT, DELTA, LAMBDA_BPS, GAMMA_BPS))),
             IHooks(address(0))
         ];
@@ -191,6 +198,34 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
         if (v != NO_HOOK) require(_vault(currency1) > v0, "the measured swap must be charged");
         _record(v, "charged_after_other_tx", used);
     }
+
+    /// @dev The block-scoped hook's block surplus P (0 for the other variants).
+    function _p(uint256 v, PoolKey memory key) internal view returns (uint256) {
+        return v == 0 ? bs.scopeSurplus(key.toId()) : 0;
+    }
+
+    function _positiveSurplus(uint256 v, bool nextBlock) internal {
+        _assertIsolated();
+        uint256 v1 = _vault(currency1);
+        _one(charged[v], SMALL);
+        uint256 p0 = _p(v, charged[v]);
+        if (nextBlock) {
+            vm.roll(block.number + 1);
+            _nudge(v, charged[v], 1.2001e18);
+        }
+        uint256 used = _one(charged[v], SMALL);
+        if (v != NO_HOOK) require(_vault(currency1) == v1, "the swaps must be uncharged");
+        uint256 p1 = _p(v, charged[v]);
+        if (v == 0) require(p0 != 0 && p1 != 0 && p1 != p0, "P must change value, nonzero to nonzero");
+        _record(v, nextBlock ? "new_block_positive_surplus" : "second_tx_positive_surplus", used);
+    }
+
+    function test_block_scoped_new_block_positive_surplus() public { _positiveSurplus(0, true); }
+    function test_tx_scoped_new_block_positive_surplus() public { _positiveSurplus(1, true); }
+    function test_no_hook_new_block_positive_surplus() public { _positiveSurplus(2, true); }
+    function test_block_scoped_second_tx_positive_surplus() public { _positiveSurplus(0, false); }
+    function test_tx_scoped_second_tx_positive_surplus() public { _positiveSurplus(1, false); }
+    function test_no_hook_second_tx_positive_surplus() public { _positiveSurplus(2, false); }
 
     function test_block_scoped_charged_after_other_tx() public { _chargedAfterOtherTx(0); }
     function test_tx_scoped_charged_after_other_tx() public { _chargedAfterOtherTx(1); }

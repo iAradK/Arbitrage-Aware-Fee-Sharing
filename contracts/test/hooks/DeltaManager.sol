@@ -46,4 +46,21 @@ contract DeltaManager {
             charges[j] = swap(hook, key, d0[j], d1[j], settleToken0);
         }
     }
+
+    /// @dev As swapMany, and before each swap reads quote() of that swap's delta inside the same
+    /// transaction (the hook keeps the transaction's running state in transient storage).
+    function quoteAndSwapMany(
+        ParticipationAwareHook hook,
+        PoolKey calldata key,
+        int128[] calldata d0,
+        int128[] calldata d1,
+        bool settleToken0
+    ) external returns (int128[] memory charges, uint256[] memory quotes) {
+        charges = new int128[](d0.length);
+        quotes = new uint256[](d0.length);
+        for (uint256 j; j < d0.length; ++j) {
+            quotes[j] = hook.quote(key, d0[j], d1[j]);
+            charges[j] = swap(hook, key, d0[j], d1[j], settleToken0);
+        }
+    }
 }

@@ -1,0 +1,27 @@
+{
+ "description": "Canonical gas figures of the block-scoped ParticipationAwareHook. Overheads are gas with the hook minus the identical swap without a hook, each measured swap a cold transaction (forge test --isolate). Additional transaction = 21,000 + steady-state swap without a hook + hook overhead. Not used by any experiment yet; results/e7/gas_profile.json and hook_overhead_gas are unchanged.",
+ "hook": "contracts/src/hooks/ParticipationAwareHook.sol (block-scoped)",
+ "source": {
+  "table": "results/gas/gas_cold.csv",
+  "table_git_blob": "8dd47cc17fce8847d89cfe217c1a8fcebff6a9b0",
+  "table_commit": "a8942a4",
+  "script": "experiments/gas_cold_table.py",
+  "measured_on_contracts_commit": "ff0b30c12c48e66da7b8ce30e2a5ac9f65eee11a",
+  "explanation": "results/gas/README.md"
+ },
+ "hook_overhead_gas": {
+  "first_swap_of_block": 34559,
+  "charged_swap": 48177,
+  "charged_swap_empty_vault_sensitivity": 65277
+ },
+ "additional_transaction_new_block_gas": {
+  "uncharged": 155595,
+  "charged": 169213
+ },
+ "intrinsic_gas": 21000,
+ "swap_gas_steady_state": 100036,
+ "swap_basis": "cold single-range swap on a pool in steady state (Foundry test pool, measured inside the transaction)",
+ "usd_per_gas_median": 5.449205675565401e-07,
+ "usd_per_gas_median_rounded": 5.449e-07,
+ "usd_per_gas_source": "P50 of C_gas_actual_usd in results/e7/tables/e7_smin_gas_conditions.csv / g_hat 180,214 (results/e7/smin_formula.txt): g_hat gas at each block's actual gas price and ETH price over all blocks of the study window"
+}

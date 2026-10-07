@@ -248,8 +248,8 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     cfg2 = reporting.load_config(ROOT / "experiments" / "configs" / "e2.yml")
     gas_cfg = json.load(open(eB.GAS_CFG))
-    gas = {"first": cfg2["gas_units"] + cfg2["hook_overhead_gas"], "extra": gas_cfg["extra_tx_gas_uncharged"],
-           "extra_charged": gas_cfg["extra_tx_gas_charged"]}
+    gas = {"first": cfg2["gas_units"] + cfg2["hook_overhead_gas"], "extra": gas_cfg["additional_transaction_new_block_gas"]["uncharged"],
+           "extra_charged": gas_cfg["additional_transaction_new_block_gas"]["charged"]}
     eAgas = eA.gas_constants()
     lam, gam = cfg2["headline"]["lambda"], cfg2["headline"]["gamma"]
     Fint = eA.Fint(lam, gam)

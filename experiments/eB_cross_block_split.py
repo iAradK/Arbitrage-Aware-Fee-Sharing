@@ -313,8 +313,8 @@ def main():
             raise SystemExit("--split test requires --confirm-frozen (experiment B runs on the validation months)")
         reporting.guard_split("e2", "test", True, cfg2)
     gas_cfg = json.load(open(GAS_CFG))
-    gas = {"first": cfg2["gas_units"] + cfg2["hook_overhead_gas"], "extra": gas_cfg["extra_tx_gas_uncharged"],
-           "extra_charged": gas_cfg["extra_tx_gas_charged"]}
+    gas = {"first": cfg2["gas_units"] + cfg2["hook_overhead_gas"], "extra": gas_cfg["additional_transaction_new_block_gas"]["uncharged"],
+           "extra_charged": gas_cfg["additional_transaction_new_block_gas"]["charged"]}
     lam, gam = cfg2["headline"]["lambda"], cfg2["headline"]["gamma"]
     tau = eA.tau_hat_wei()
     Fint = eA.Fint(lam, gam)

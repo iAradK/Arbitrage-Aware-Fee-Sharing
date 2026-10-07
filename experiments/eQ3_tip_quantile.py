@@ -172,7 +172,7 @@ def main():
     worst = req.groupby("setting")["violation_rate"].max()
     ok = [s for s in REQUESTED if worst[s] < MAX_VIOLATION_RATE]
     rec = min(ok, key=lambda s: REQUESTED[s]) if ok else None    # transfer falls with tau_hat: the lowest passing quantile
-    scan = summ[summ.quantile.notna()].groupby("quantile")["violation_rate"].max()
+    scan = summ[summ["quantile"].notna()].groupby("quantile")["violation_rate"].max()
     lowest_scan = float(scan[scan < MAX_VIOLATION_RATE].index.min()) if (scan < MAX_VIOLATION_RATE).any() else None
     recd = {"criterion": f"max violation rate over pools < {MAX_VIOLATION_RATE:.0%}, then the smallest loss of transfer",
             "recommended_requested_quantile": rec, "worst_violation_rate_by_requested_setting": worst.to_dict(),

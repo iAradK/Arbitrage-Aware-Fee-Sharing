@@ -210,3 +210,61 @@ The fail-safe therefore guards against other tokens, for example an 18-decimal t
 `ScopedHookReference` now models settlement in token1: W advances by the collected value, rounded up, and the remainder stays owed. It also models the int128 limit of the settlement amount.
 
 Pitfall: with `via_ir`, a `block.number` cached in a local can be re-read after `vm.roll`, because the optimizer treats `NUMBER` as constant within a transaction. Tests use `vm.getBlockNumber()` instead.
+
+## 9. Final design (S1, 2026-10-07)
+
+`ParticipationAwareHook.sol` now implements block scope with per-transaction clipping (V1) and the relative proportional buffer. `TxScopedParticipationAwareHook.sol` is unchanged.
+
+**Accounting.** One scope per pool and block. Each transaction t has a bracket b_t = [X_t · π̂ − ceil(ε_rel · π̂ · G_t)]⁺, where X_t is its net core delta and G_t its gross token1 volume. The block surplus is A = Σ (completed brackets) + the current transaction's bracket, and the watermark applies to F(A).
+
+**Transactions.** A transient flag per pool marks the first swap of each transaction. That swap folds the previous transaction's bracket into the block total.
+
+**Locked parameters.** κ = K̂ only (no δ), deducted once per block. ε_rel is configured in parts per billion and can be updated by `epsilonAdmin`; it is locked into the scope when the scope opens, together with the reference, κ, λ and γ. The evaluated configuration is τ̂ = 3 gwei, g = 180,214, γ = 0.02, ε_rel = 0.283%.
+
+**State.** Four slots:
+- A: block | W | λ | γ | ε_ppb
+- B: the current transaction's net delta
+- C: reference | κ
+- D: closed surplus | the current transaction's gross token1 volume
+
+A closed surplus or gross volume above 2^128 − 1 saturates W, like the earlier limits.
+
+**Reference.** The integer mirror is `ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel")`.
+
+**Changed test expectations.** Seven existing block-scoped tests encoded net accumulation across transactions (or a surplus without the buffer), so their expectations changed for V1. New tests were also added: closed-sum and gross-volume overflow, the eps lock, and `BlockScopeV1Properties`.
+
+**Where the new expected values come from.** In the first S1 draft, the seven tests computed their expected charges in Solidity, by applying `_F` / `_scopeSurplus` to the hook's own stored scope. That mirrors the contract; it is not a reference. They now record every swap they make:
+- real swaps: the core delta from the PoolManager `Swap` event, the settlement token, the block, the transaction index (each call is a transaction under `--isolate`; one transaction without it), the oracle price a scope opened at that swap would lock, and the base fee;
+- DeltaManager swaps: the deltas passed in.
+
+`BlockScopedHookTestBase._refRun` sends the trace through `experiments/block_scope_v1_ffi.py` to `common.fixedpoint.ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel")`. It passes the hook's own constructor parameters (K̂, λ, γ, g, τ̂, gas price, ε_ppb · 1e9), and asserts that each charge equals the reference's W increase. Where stated below, it also asserts that the block surplus `scopeSurplus()` equals the reference's A. The suites need `forge test --ffi`.
+
+**Negative control.** With the reference's K̂ raised by 0.1 token0 (a temporary edit of `_refRun`, reverted), five of the seven fail on exactly these equalities:
+- reversal;
+- both mid-block tests;
+- spillover;
+- new block.
+
+The two int128 overflow tests are unaffected, as they should be. Their reference checks are the saturation flags, and the charge before saturation is either λa with a ≈ 2^127 (κ is irrelevant) or 0.
+
+| Test (file) | Old expectation | Why V1 changes it | New expected value |
+|---|---|---|---|
+| `test_ReversalAcrossTransactions` (Scenarios, `--isolate`) | Five transactions (forward, adverse, small recovery, large recovery, adverse) net into one A; W = max_j F(A_j); the small recovery below the earlier peak pays nothing; the path ends below its peak. | Each transaction is its own bracket clipped at 0. An adverse transaction neither lowers A nor refunds, and every later correcting transaction is charged on its own bracket. A is non-decreasing; W = F(A) = the total paid. | Each charge r_j = reference w_j; `scopeSurplus` after each swap = reference A_j; the adverse transactions show reference A unchanged and w = 0 (asserted on the reference's output); total paid = W = Σ reference w_j. |
+| `test_OracleUpdateMidBlockDoesNotMoveLockedReference` (Scenarios, `--isolate`) | The second swap's charge = F(net of both swaps at 1.2) − W₁, via `_scopeSurplus` on the netted cumulative delta. `_lastDelta` = cumulative after − cumulative before. | The second swap is a new transaction: the first is folded into the closed surplus, and the cumulative delta holds only the current transaction. The old `_lastDelta` difference would then be wrong, so `_lastDelta` returns the cumulative delta itself. | Both charges (the mid-block swap with oracle 1.5 in the trace, and the next block's opening swap at 1.5) = reference w. The reference is computed before `vm.revertToState`, because the revert also rolls back the trace. The `quote()` = charge assertions are unchanged. |
+| `testFuzz_SpilloverBound` (Scenarios, `--isolate`) | r_j ≤ F(a_j) + (1−γ)κ + 4, with a_j from the `_lastDelta` difference. | Same `_lastDelta` problem: under V1 the stored delta is the current transaction's, not a running sum. | r_j = reference w_j (equality), and a_j now comes from the swap's own `Swap` event. The upper bound F(a_j) + (1−γ)κ is still evaluated with the hook's pure `computeTransfer`, the F that E7 conformance checks against `transfer_wad`. It is a bound, not an expected value. |
+| `test_MidBlockOracleUpdateDoesNotMoveLockedReference` (Boundary, both modes) | Cumulative delta = Alice + Bob (netted); charge = F(net) − W₀; the post-revert swap charge = F(net of three) − W₁. | With `--isolate`, Bob's swap is a new transaction: Alice's bracket is folded, and the current delta is Bob's alone. Without isolation, one transaction nets as before. The boundary hook now also has the buffer (ε = 0.283%) and τ̂ = 3 gwei. | All four charges = reference w. The trace gives the reference 2e18 and an invalid price at the mid-block swaps; it ignores both because the scope is open, so matching it means the hook charged at the locked 1.2e18. The state-layout checks (folded closed surplus, current delta per mode) remain checks on the stored fields. |
+| `test_NewBlockResetsAccumulatorAndRelocksReferenceAndKappa` (Boundary, both modes) | c₃ = F(own surplus) via `_scopeSurplus` (no buffer); W = c₁ + c₂. | The boundary hook now deducts the relative buffer inside each bracket, so F of the unbuffered surplus is no longer the charge. A closed-surplus reset is also checked (`closedSurplus == 0`). | c₁, c₂, c₃ = reference w; `scopeSurplus` after c₃ = reference A. The κ formula checks (`_kappa`) are unchanged parameter checks. |
+| `test_OverflowCumulativeDeltaSaturatesForRestOfBlock` (Boundary, both modes) | Two separate calls: +(2^127 − 11), then +11; the second leaves int128 and saturates. | With `--isolate` the second call is a new transaction. It folds the first and holds only +11, so nothing overflows: the old test would no longer trigger the fail-safe. The two swaps are now one transaction (`DeltaManager.swapMany`). | First charge = reference w₀. From the second swap to the end of the block, the reference reports saturation (A = 2^256 − 1 sentinel, w = 0), as the hook does (W = 2^128 − 1, charge 0). The next block's charge = reference. |
+| `test_OverflowNegativeCumulativeDeltaSaturates` (Boundary, both modes) | Two calls: d1 = −2^127 + 5, then −6; the second saturates. | Same: under V1 the second call would start a new transaction. Now one transaction. | Reference w₀ = 0 = hook. Reference saturated from the second swap on, w = 0; the next block's charge = reference. |
+
+Other tests still use `_F(hook, s, _scopeSurplus(s))`, the contract mirror. Since S1, `_scopeSurplus` = closed surplus + buffered current bracket. These tests passed unchanged and are not among the seven:
+- the invalid-oracle retry, the eps lock and the base-fee re-lock (Boundary);
+- the opening-swap, fuzz and roll tests of `BlockScopedHook.t.sol`;
+- two split tests, `BlockScopedHook.t.sol:229` and `BlockScopedHookScenarios.t.sol:266` ("sum of charges = F(A)"). These span several transactions under `--isolate`.
+
+They check internal consistency (charges = F of the stored state), not reference values. Reference equality for multi-transaction blocks comes from:
+- the seven tests above;
+- E7 conformance (`vectors_v1.json`, split modes a/b/c);
+- the 2,000-run fuzz (multi-swap transactions over several blocks).
+
+Results and gas: `results/e7_block_scope/` (`conformance_counts_v1.json`, `fuzz_v1_*.csv`) and `results/gas/gas_cold.csv`.

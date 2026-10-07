@@ -7,174 +7,204 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 
-import {BlockScopedHookTestBase} from "./BlockScopedHookTestBase.sol";
+import {BlockScopedHookTestBase, SwapProbe} from "./BlockScopedHookTestBase.sol";
 import {ParticipationAwareHook} from "../../src/hooks/ParticipationAwareHook.sol";
 import {MockOracle} from "../../src/mocks/MockOracle.sol";
 
-/// @notice Contract vs reference, to the wei. Each run interleaves real swaps through the
-/// PoolManager from up to 8 senders, both directions, exact input and exact output (so both
-/// settlement currencies), over 1-4 blocks. The oracle price is updated between blocks and
-/// sometimes mid-block, and is sometimes invalid for the first swaps of a block. After the
-/// run, the swap trace goes through common.fixedpoint.ScopedHookReference
-/// (experiments/block_scope_ffi.py, vm.ffi), and every swap's watermark increase and
-/// settled token amount must equal the reference's.
+/// @notice Final hook vs ScopedHookReference(scope="block", accumulation="tx_clip",
+/// buffer="rel"), to the wei, per swap. Each run: 1-4 blocks; in each block 1-3 transactions
+/// from up to 8 senders (each sender a SwapProbe contract; a transaction is one swapMany
+/// call of 1-3 swaps), both directions, exact input and output (both settlement
+/// currencies); oracle updates between blocks and sometimes mid-block; sometimes an invalid
+/// oracle for the first transactions of a block. Per swap, the core delta comes from the
+/// PoolManager's Swap event and the hook's marginal charge, block surplus A and settled amount
+/// from its HookCharge / HookSettled events; the trace goes through
+/// experiments/block_scope_v1_ffi.py and all three must equal the reference.
 ///
 /// Needs `--ffi`. Runs both ways:
-///   --isolate     every swap is its own transaction; isolated calls see block.basefee = 0
-///                 (forge 1.5.1), so kappa varies only through the locked reference
-///   no --isolate  one transaction per run, with vm.fee setting a new base fee in every block
-/// Each run appends one line to results/e7_block_scope/fuzz_<mode>.csv.
+///   --isolate     each swapMany call is its own transaction; isolated calls see base fee 0
+///   no --isolate  the whole run is one transaction (every block's swaps share it), and
+///                 vm.fee sets a new base fee in every block
+/// Each run appends one line to results/e7_block_scope/fuzz_v1_<mode>.csv.
 contract BlockScopeFuzzTest is BlockScopedHookTestBase {
     uint256 internal constant K = 1e18;
-    uint256 internal constant BUFFER = 0.25e18;
-    uint64 internal constant GAS_UNITS = 150_000;
-    uint64 internal constant TAU = 5e7;
+    uint256 internal constant NONE = type(uint256).max;
     bytes32 internal constant SWAP_TOPIC = keccak256("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)");
+    bytes32 internal constant CHARGE_TOPIC = keccak256("HookCharge(bytes32,uint256,uint256,uint256)");
+    bytes32 internal constant SETTLED_TOPIC = keccak256("HookSettled(bytes32,address,uint256)");
 
     ParticipationAwareHook internal hook;
     PoolKey internal pool;
     PoolId internal poolId;
-    address[8] internal actors;
+    SwapProbe[8] internal senders;
     bool internal isolated;
     string internal logPath;
 
     struct Rec {
         uint256 blk;
+        uint256 tx;
         uint256 price;
         uint256 basefee;
         int256 d0;
         int256 d1;
         bool settle0;
-        uint256 wInc;
+        uint256 w;
         uint256 token;
+        uint256 surplus;
+        bool hasCharge;
+    }
+
+    struct Run {
+        uint256 ctr;
+        uint256 n;
+        uint256 txid;
+        uint256 txs;
+        uint256 multiSwapTxs;
+        uint256 invalidSwaps;
+        uint256 midBlockUpdates;
+        uint256 price;
     }
 
     function setUp() public {
         setUpBase();
-        ParticipationAwareHook.Params memory p = _params(K, BUFFER, LAMBDA_BPS, GAMMA_BPS);
-        p.gasUnits = GAS_UNITS;
-        p.priorityFeeWei = TAU; // gasPriceToken0Wad = 0: the gas cost is priced at the locked reference
-        hook = _deployHook(p);
+        hook = _deployHook(_finalParams(K));
         (pool, poolId) = _pool(IHooks(address(hook)), 1e18);
         for (uint256 i; i < 8; ++i) {
-            actors[i] = _actor(i);
+            senders[i] = _probe();
         }
         transientProbe.set();
         isolated = !transientProbe.isSet();
-        logPath = isolated ? "../results/e7_block_scope/fuzz_isolate.csv" : "../results/e7_block_scope/fuzz_no_isolate.csv";
+        logPath = isolated ? "../results/e7_block_scope/fuzz_v1_isolate.csv" : "../results/e7_block_scope/fuzz_v1_no_isolate.csv";
         if (vm.exists(logPath)) vm.removeFile(logPath);
-        vm.writeLine(logPath, "swaps,blocks,senders,charged,oracle_invalid_swaps,mid_block_updates,mismatches");
+        vm.writeLine(logPath, "swaps,txs,multi_swap_txs,blocks,senders,charged,oracle_invalid_swaps,mid_block_updates,mismatches");
     }
 
     function _r(uint256 seed, uint256 i) internal pure returns (uint256) {
         return uint256(keccak256(abi.encode(seed, i)));
     }
 
-    function _coreDelta() internal returns (int256 d0, int256 d1) {
+    /// @dev Executes one transaction and appends one Rec per swap from its events.
+    function _tx(uint256 seed, Run memory run, Rec[] memory recs, uint256 nSenders, bool valid) internal {
+        uint256 k = 1 + _r(seed, run.ctr++) % 3;
+        if (run.n + k > recs.length) k = recs.length - run.n;
+        if (k == 0) return;
+        IPoolManager.SwapParams[] memory ps = new IPoolManager.SwapParams[](k);
+        for (uint256 j; j < k; ++j) {
+            bool zeroForOne = _r(seed, run.ctr++) % 2 == 0;
+            uint256 amount = 1e17 + _r(seed, run.ctr++) % 5e19;
+            ps[j] = _r(seed, run.ctr++) % 2 == 0 ? _exactIn(zeroForOne, amount) : _exactOut(zeroForOne, amount);
+        }
+        SwapProbe who = senders[_r(seed, run.ctr++) % nSenders];
+        vm.recordLogs();
+        who.swapMany(pool, ps);
         Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 first = run.n;
+        uint256 idx;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter == address(manager) && logs[i].topics[0] == SWAP_TOPIC) {
                 (int128 a0, int128 a1,,,,) = abi.decode(logs[i].data, (int128, int128, uint160, uint128, int24, uint24));
-                return (a0, a1);
+                Rec memory rec = recs[run.n++];
+                rec.blk = vm.getBlockNumber();
+                rec.tx = run.txid;
+                rec.price = valid ? run.price : 0;
+                rec.basefee = isolated ? 0 : block.basefee;
+                (rec.d0, rec.d1) = (a0, a1);
+                rec.settle0 = (ps[idx].amountSpecified < 0) != ps[idx].zeroForOne;
+                ++idx;
+            } else if (logs[i].emitter == address(hook) && logs[i].topics[0] == CHARGE_TOPIC) {
+                (uint256 surplus,, uint256 marginal) = abi.decode(logs[i].data, (uint256, uint256, uint256));
+                Rec memory rec = recs[run.n - 1];
+                (rec.surplus, rec.w, rec.hasCharge) = (surplus, marginal, true);
+            } else if (logs[i].emitter == address(hook) && logs[i].topics[0] == SETTLED_TOPIC) {
+                (, uint256 amount) = abi.decode(logs[i].data, (address, uint256));
+                recs[run.n - 1].token = amount;
             }
         }
-        revert("no Swap event");
-    }
-
-    function _vaults() internal view returns (uint256) {
-        return _vault(currency0) + _vault(currency1);
+        assertEq(run.n - first, k, "one Swap event per swap");
+        ++run.txs;
+        if (k > 1) ++run.multiSwapTxs;
+        if (isolated) ++run.txid; // without --isolate the whole run is one transaction
     }
 
     /// forge-config: default.fuzz.runs = 2000
     function testFuzz_ContractMatchesReference(uint256 seed) public {
         bytes32 id = PoolId.unwrap(poolId);
-        uint256 ctr;
-        uint256 nBlocks = 1 + _r(seed, ctr++) % 4;
-        uint256 nSenders = 1 + _r(seed, ctr++) % 8;
+        Run memory run;
+        uint256 nBlocks = 1 + _r(seed, run.ctr++) % 4;
+        uint256 nSenders = 1 + _r(seed, run.ctr++) % 8;
         Rec[] memory recs = new Rec[](16);
-        uint256[3] memory stats; // oracle-invalid swaps, mid-block updates, charged swaps
-        uint256 n;
         for (uint256 b; b < nBlocks; ++b) {
-            vm.roll(block.number + 1 + _r(seed, ctr++) % 3);
+            vm.roll(vm.getBlockNumber() + 1 + _r(seed, run.ctr++) % 3);
             vm.warp(block.timestamp + 12);
-            if (!isolated) vm.fee(1 gwei + _r(seed, ctr++) % 200 gwei);
-            uint256 price = 0.8e18 + _r(seed, ctr++) % 0.45e18; // oracle update between blocks
-            oracle.setPrice(id, price);
+            if (!isolated) vm.fee(1 gwei + _r(seed, run.ctr++) % 200 gwei);
+            run.price = 0.8e18 + _r(seed, run.ctr++) % 0.45e18; // oracle update between blocks
+            oracle.setPrice(id, run.price);
             oracle.setMode(id, MockOracle.Mode.Normal);
-            uint256 swaps = 1 + _r(seed, ctr++) % 4;
-            // with probability 1/5 the oracle is invalid for the first `invalidFor` swaps, then valid again
-            uint256 invalidFor = _r(seed, ctr++) % 5 == 0 ? 1 + _r(seed, ctr++) % swaps : 0;
-            if (invalidFor != 0) oracle.setMode(id, MockOracle.Mode(1 + _r(seed, ctr++) % 5));
-            for (uint256 s; s < swaps; ++s) {
-                if (invalidFor != 0 && s == invalidFor) oracle.setMode(id, MockOracle.Mode.Normal);
-                if (s != 0 && _r(seed, ctr++) % 4 == 0) {
-                    price = 0.8e18 + _r(seed, ctr++) % 0.45e18; // mid-block update
-                    oracle.setPrice(id, price);
-                    ++stats[1];
+            uint256 ntx = 1 + _r(seed, run.ctr++) % 3;
+            uint256 invalidFor = _r(seed, run.ctr++) % 5 == 0 ? 1 + _r(seed, run.ctr++) % ntx : 0;
+            if (invalidFor != 0) oracle.setMode(id, MockOracle.Mode(1 + _r(seed, run.ctr++) % 5));
+            for (uint256 t; t < ntx; ++t) {
+                if (invalidFor != 0 && t == invalidFor) oracle.setMode(id, MockOracle.Mode.Normal);
+                if (t != 0 && _r(seed, run.ctr++) % 4 == 0) {
+                    run.price = 0.8e18 + _r(seed, run.ctr++) % 0.45e18; // mid-block update
+                    oracle.setPrice(id, run.price);
+                    ++run.midBlockUpdates;
                 }
-                bool valid = invalidFor == 0 || s >= invalidFor;
-                if (!valid) ++stats[0];
-                bool zeroForOne = _r(seed, ctr++) % 2 == 0;
-                bool exactIn = _r(seed, ctr++) % 2 == 0;
-                uint256 amount = 1e17 + _r(seed, ctr++) % 5e19;
-                address who = actors[_r(seed, ctr++) % nSenders];
-
-                ParticipationAwareHook.Scope memory before = hook.getScope(poolId);
-                uint256 v = _vaults();
-                vm.recordLogs();
-                _swapAs(who, pool, exactIn ? _exactIn(zeroForOne, amount) : _exactOut(zeroForOne, amount));
-                (int256 d0, int256 d1) = _coreDelta();
-                ParticipationAwareHook.Scope memory afterSwap_ = hook.getScope(poolId);
-
-                Rec memory rec = recs[n++];
-                rec.blk = block.number;
-                rec.price = valid ? price : 0;
-                rec.basefee = isolated ? 0 : block.basefee;
-                (rec.d0, rec.d1) = (d0, d1);
-                rec.settle0 = exactIn != zeroForOne; // the unspecified currency is token0
-                rec.wInc = afterSwap_.blockNumber != before.blockNumber
-                    ? afterSwap_.watermark
-                    : afterSwap_.watermark - before.watermark;
-                rec.token = _vaults() - v;
-                if (rec.wInc != 0) ++stats[2];
+                bool valid = invalidFor == 0 || t >= invalidFor;
+                uint256 before = run.n;
+                _tx(seed, run, recs, nSenders, valid);
+                if (!valid) run.invalidSwaps += run.n - before;
             }
         }
-
-        string[] memory cmd = new string[](9 + 6 * n);
+        uint256 n = run.n;
+        string[] memory cmd = new string[](9 + 7 * n);
         cmd[0] = "python3";
-        cmd[1] = "../experiments/block_scope_ffi.py";
+        cmd[1] = "../experiments/block_scope_v1_ffi.py";
         cmd[2] = vm.toString(K);
-        cmd[3] = vm.toString(BUFFER);
-        cmd[4] = vm.toString(uint256(LAMBDA_BPS));
-        cmd[5] = vm.toString(uint256(GAMMA_BPS));
-        cmd[6] = vm.toString(uint256(GAS_UNITS));
-        cmd[7] = vm.toString(uint256(TAU));
-        cmd[8] = "0";
+        cmd[3] = vm.toString(uint256(LAMBDA_BPS));
+        cmd[4] = vm.toString(uint256(FINAL_GAMMA_BPS));
+        cmd[5] = vm.toString(uint256(FINAL_GAS_UNITS));
+        cmd[6] = vm.toString(uint256(FINAL_TAU_WEI));
+        cmd[7] = "0";
+        cmd[8] = vm.toString(uint256(FINAL_EPS_PPB) * 1e9);
         for (uint256 i; i < n; ++i) {
             Rec memory rec = recs[i];
-            cmd[9 + 6 * i] = vm.toString(rec.blk);
-            cmd[10 + 6 * i] = vm.toString(rec.price);
-            cmd[11 + 6 * i] = vm.toString(rec.basefee);
-            cmd[12 + 6 * i] = vm.toString(rec.d0);
-            cmd[13 + 6 * i] = vm.toString(rec.d1);
-            cmd[14 + 6 * i] = rec.settle0 ? "1" : "0";
+            uint256 o = 9 + 7 * i;
+            cmd[o] = vm.toString(rec.blk);
+            cmd[o + 1] = vm.toString(rec.tx);
+            cmd[o + 2] = vm.toString(rec.price);
+            cmd[o + 3] = vm.toString(rec.basefee);
+            cmd[o + 4] = vm.toString(rec.d0);
+            cmd[o + 5] = vm.toString(rec.d1);
+            cmd[o + 6] = rec.settle0 ? "1" : "0";
         }
         uint256[] memory exp = abi.decode(vm.ffi(cmd), (uint256[]));
-        assertEq(exp.length, 2 * n, "reference output length");
+        assertEq(exp.length, 3 * n, "reference output length");
         uint256 mismatches;
+        uint256 charged;
         for (uint256 i; i < n; ++i) {
-            if (recs[i].wInc != exp[2 * i] || recs[i].token != exp[2 * i + 1]) ++mismatches;
+            Rec memory rec = recs[i];
+            bool bad = rec.w != exp[3 * i] || rec.token != exp[3 * i + 1];
+            if (rec.hasCharge && exp[3 * i + 2] != NONE && rec.surplus != exp[3 * i + 2]) bad = true;
+            if (rec.hasCharge != (exp[3 * i + 2] != NONE)) bad = true; // a scope exists exactly when the reference has one
+            if (bad) ++mismatches;
+            if (rec.w != 0) ++charged;
         }
         vm.writeLine(
             logPath,
             string.concat(
-                vm.toString(n), ",", vm.toString(nBlocks), ",", vm.toString(nSenders), ",", vm.toString(stats[2]), ",",
-                vm.toString(stats[0]), ",", vm.toString(stats[1]), ",", vm.toString(mismatches)
+                vm.toString(n), ",", vm.toString(run.txs), ",", vm.toString(run.multiSwapTxs), ",", vm.toString(nBlocks), ",",
+                vm.toString(nSenders), ",", vm.toString(charged), ",", vm.toString(run.invalidSwaps), ",",
+                vm.toString(run.midBlockUpdates), ",", vm.toString(mismatches)
             )
         );
         for (uint256 i; i < n; ++i) {
-            assertEq(recs[i].wInc, exp[2 * i], "watermark increase differs from the reference");
-            assertEq(recs[i].token, exp[2 * i + 1], "settled token amount differs from the reference");
+            assertEq(recs[i].w, exp[3 * i], "marginal charge differs from the reference");
+            assertEq(recs[i].token, exp[3 * i + 1], "settled amount differs from the reference");
+            if (recs[i].hasCharge && exp[3 * i + 2] != NONE) {
+                assertEq(recs[i].surplus, exp[3 * i + 2], "block surplus differs from the reference");
+            }
         }
+        assertEq(mismatches, 0, "mismatches");
     }
 }

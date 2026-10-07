@@ -35,7 +35,7 @@ abstract contract BlockScopeBoundaryBase is BlockScopedHookTestBase {
 
     uint256 internal constant K = 2e18;
     uint64 internal constant GAS_UNITS = 150_000;
-    uint64 internal constant TAU = 5e7;
+    uint64 internal constant TAU = 3 gwei; // the configured tau_hat (Q3)
 
     ParticipationAwareHook internal hook;
     PoolKey internal pool;
@@ -43,17 +43,23 @@ abstract contract BlockScopeBoundaryBase is BlockScopedHookTestBase {
     bytes32 internal id;
     address internal alice;
     address internal bob;
+    bool internal isolated; // every external call is its own transaction
+    uint256 internal px = 1.2e18; // oracle price a scope opened now would lock (0 = invalid), for the reference trace
 
     function setUp() public virtual {
         setUpBase();
         ParticipationAwareHook.Params memory p = _params(K, 0, LAMBDA_BPS, GAMMA_BPS);
         p.gasUnits = GAS_UNITS;
         p.priorityFeeWei = TAU; // gasPriceToken0Wad = 0: kappa's gas part is priced at the locked reference
+        p.epsilonRelPpb = FINAL_EPS_PPB; // relative buffer, locked per scope
+        p.epsilonAdmin = address(this);
         hook = _deployHook(p);
         (pool, poolId) = _pool(IHooks(address(hook)), 1.2e18);
         id = PoolId.unwrap(poolId);
         alice = _actor(1);
         bob = _actor(2);
+        transientProbe.set();
+        isolated = !transientProbe.isSet();
     }
 
     function _kappa(uint256 basefee, uint256 ref) internal pure returns (uint256) {
@@ -69,7 +75,7 @@ abstract contract BlockScopeBoundaryBase is BlockScopedHookTestBase {
     /// charge (vault increase) and the core delta (token0 = caller delta + charge).
     function _buy(address who, uint256 amount1) internal returns (uint256 charge, int256 d0, int256 d1) {
         uint256 v = _vault(currency0);
-        BalanceDelta d = _swapAs(who, pool, _exactOut(true, amount1));
+        BalanceDelta d = _swapRec(who, pool, _exactOut(true, amount1), px);
         charge = _vault(currency0) - v;
         d0 = int256(d.amount0()) + int256(charge);
         d1 = d.amount1();
@@ -80,6 +86,7 @@ contract BlockScopeBoundaryTest is BlockScopeBoundaryBase {
     // ---------------------------------------------------------------- 1. new block
     function test_NewBlockResetsAccumulatorAndRelocksReferenceAndKappa() public {
         uint256 b = vm.getBlockNumber(); // not block.number: via_ir may re-read it after vm.roll
+        _refInit();
         (uint256 c1,,) = _buy(alice, 40e18);
         (uint256 c2,,) = _buy(bob, 10e18);
         ParticipationAwareHook.Scope memory s = hook.getScope(poolId);
@@ -91,6 +98,7 @@ contract BlockScopeBoundaryTest is BlockScopeBoundaryBase {
 
         _nextBlock();
         oracle.setPrice(id, 1.5e18);
+        px = 1.5e18;
         (uint256 c3, int256 d0, int256 d1) = _buy(alice, 20e18);
         ParticipationAwareHook.Scope memory t = hook.getScope(poolId);
         assertEq(t.blockNumber, b + 1, "new scope");
@@ -100,33 +108,75 @@ contract BlockScopeBoundaryTest is BlockScopeBoundaryBase {
         assertEq(t.kappa, _kappa(block.basefee, 1.5e18), "kappa re-locked (gas part priced at the new reference)");
         assertTrue(t.kappa != s.kappa, "kappa changed with the reference");
         assertEq(t.watermark, c3, "W restarts at 0");
-        assertEq(c3, _F(hook, t, _scopeSurplus(t)), "charged F(own surplus): nothing carried over");
+        assertEq(t.closedSurplus, 0, "no closed transactions carried over");
+        // expected charges from ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel")
+        RefOut memory e = _refRun(hook);
+        assertEq(c1, e.w[0], "charge 1 = reference");
+        assertEq(c2, e.w[1], "charge 2 = reference");
+        assertEq(c3, e.w[2], "charge 3 = reference: nothing carried over");
+        assertEq(hook.scopeSurplus(poolId), e.surplus[2], "block surplus = reference");
+    }
+
+    function test_EpsilonLockedWhenTheScopeOpens() public {
+        _buy(alice, 20e18);
+        assertEq(hook.getScope(poolId).epsilonRelPpb, FINAL_EPS_PPB, "eps locked at open");
+        hook.setEpsilonRelPpb(5_000_000); // mid-block update (rolling calibration)
+        (uint256 c,,) = _buy(bob, 20e18);
+        ParticipationAwareHook.Scope memory s = hook.getScope(poolId);
+        assertEq(s.epsilonRelPpb, FINAL_EPS_PPB, "the open scope keeps its eps");
+        assertEq(c, _F(hook, s, _scopeSurplus(s)) - (s.watermark - c), "charged with the locked eps");
+        _nextBlock();
+        oracle.setPrice(id, 1.2e18);
+        _buy(alice, 20e18);
+        assertEq(hook.getScope(poolId).epsilonRelPpb, 5_000_000, "the next block locks the new eps");
+        vm.prank(alice);
+        vm.expectRevert(ParticipationAwareHook.NotEpsilonAdmin.selector);
+        hook.setEpsilonRelPpb(1);
     }
 
     // ---------------------------------------------------------------- 2. mid-block oracle update
     function test_MidBlockOracleUpdateDoesNotMoveLockedReference() public {
-        _buy(alice, 20e18);
+        _refInit();
+        (uint256 c0,,) = _buy(alice, 20e18);
         ParticipationAwareHook.Scope memory s0 = hook.getScope(poolId);
         oracle.setPrice(id, 2e18); // mid-block update
+        px = 2e18;
         (uint256 c, int256 d0, int256 d1) = _buy(bob, 20e18);
         ParticipationAwareHook.Scope memory s1 = hook.getScope(poolId);
         assertEq(s1.referencePriceWad, 1.2e18, "reference stays locked");
         assertEq(s1.kappa, s0.kappa, "kappa stays locked");
-        assertEq(int256(s1.cumulativeDelta0), int256(s0.cumulativeDelta0) + d0);
-        assertEq(int256(s1.cumulativeDelta1), int256(s0.cumulativeDelta1) + d1);
-        assertEq(c, _F(hook, s1, _scopeSurplus(s1)) - s0.watermark, "charged at the locked reference");
+        if (isolated) {
+            // Bob's swap is a new transaction: Alice's bracket is folded into the block total.
+            assertEq(s1.closedSurplus, _scopeSurplus(s0), "previous transaction folded");
+            assertEq(int256(s1.cumulativeDelta0), d0, "current transaction = Bob's swap");
+            assertEq(int256(s1.cumulativeDelta1), d1);
+        } else {
+            // one transaction: the swaps net as before
+            assertEq(s1.closedSurplus, 0);
+            assertEq(int256(s1.cumulativeDelta0), int256(s0.cumulativeDelta0) + d0);
+            assertEq(int256(s1.cumulativeDelta1), int256(s0.cumulativeDelta1) + d1);
+        }
 
         oracle.setMode(id, MockOracle.Mode.Revert); // the oracle fails mid-block: not read again
+        px = 0;
         (uint256 c2,,) = _buy(alice, 20e18);
-        ParticipationAwareHook.Scope memory s2 = hook.getScope(poolId);
         assertGt(c2, 0, "charging continues at the locked reference");
-        assertEq(c2, _F(hook, s2, _scopeSurplus(s2)) - s1.watermark);
 
         _nextBlock();
         oracle.setMode(id, MockOracle.Mode.Normal);
         oracle.setPrice(id, 2e18);
-        _buy(bob, 1e18);
+        px = 2e18;
+        (uint256 c3,,) = _buy(bob, 1e18);
         assertEq(hook.getScope(poolId).referencePriceWad, 2e18, "the next block locks the updated price");
+
+        // expected charges from ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel"):
+        // the trace gives the reference 2e18 / an invalid price at the mid-block swaps, which it ignores
+        // because the scope is open, so matching it means the hook charged at the locked 1.2e18
+        RefOut memory e = _refRun(hook);
+        assertEq(c0, e.w[0], "charge 0 = reference");
+        assertEq(c, e.w[1], "charged at the locked reference = reference");
+        assertEq(c2, e.w[2], "charge after the oracle failed = reference");
+        assertEq(c3, e.w[3], "next block = reference");
     }
 
     // ---------------------------------------------------------------- 3. invalid oracle (retry)
@@ -202,32 +252,106 @@ contract BlockScopeBoundaryTest is BlockScopeBoundaryBase {
         assertEq(s.blockNumber, block.number);
         assertEq(s.watermark, type(uint128).max, "W saturated");
         assertEq(raw.quote(rawKey, 1e30, 0), 0, "quote 0 after saturation");
-        assertEq(dm.swap(raw, rawKey, -1e30, 0, true), 0, "later swap: no charge");
-        assertEq(dm.swap(raw, rawKey, 1e30, 0, true), 0, "later swap with more surplus: no charge");
-        assertEq(dm.swap(raw, rawKey, 0, 1e30, false), 0, "later swap settling in token1: no charge");
+        assertEq(_dmSwap(-1e30, 0, true), 0, "later swap: no charge");
+        assertEq(_dmSwap(1e30, 0, true), 0, "later swap with more surplus: no charge");
+        assertEq(_dmSwap(0, 1e30, false), 0, "later swap settling in token1: no charge");
         assertEq(raw.getScope(rawKey.toId()).watermark, type(uint128).max, "still saturated");
         _nextBlock();
         oracle.setMode(rawId, MockOracle.Mode.Normal);
         oracle.setPrice(rawId, 1e18);
-        int128 r = dm.swap(raw, rawKey, 10e18, 0, true);
+        rawPx = 1e18;
+        int128 r = _dmSwap(10e18, 0, true);
         ParticipationAwareHook.Scope memory t = raw.getScope(rawKey.toId());
         assertEq(t.blockNumber, block.number, "next block reopens");
         assertEq(uint256(int256(r)), _F(raw, t, 10e18), "and charges normally");
         assertEq(t.watermark, uint256(int256(r)));
     }
 
+    /// @dev Swaps inside one call: one transaction in every mode.
+    function _oneTx(int128[] memory d0, int128[] memory d1) internal returns (int128[] memory) {
+        for (uint256 i; i < d0.length; ++i) _refPush(d0[i], d1[i], true, rawPx);
+        _refEndTx();
+        return dm.swapMany(raw, rawKey, d0, d1, true);
+    }
+
+    uint256 internal rawPx = 1e18;
+
+    /// @dev One DeltaManager swap (one call), recorded for the reference.
+    function _dmSwap(int128 d0, int128 d1, bool settle0) internal returns (int128 r) {
+        _refPush(d0, d1, settle0, rawPx);
+        _refEndTx();
+        return dm.swap(raw, rawKey, d0, d1, settle0);
+    }
+
+    /// @dev The reference reports a saturated (or absent) scope as surplus = 2^256 - 1. The trace
+    /// ends with _assertSaturatedForRestOfBlock: three swaps in the saturated block, one in the next.
+    function _assertReferenceSaturatedFrom(uint256 trigger) internal {
+        RefOut memory e = _refRun(raw);
+        uint256 n = e.w.length;
+        for (uint256 i = trigger; i < n - 1; ++i) {
+            assertEq(e.surplus[i], type(uint256).max, "reference saturated for the rest of the block");
+            assertEq(e.w[i], 0, "reference charges nothing after saturation");
+        }
+        assertTrue(e.surplus[n - 1] != type(uint256).max, "reference reopens in the next block");
+        assertEq(e.w[n - 1], raw.getScope(rawKey.toId()).watermark, "next-block charge = reference");
+    }
+
+    function _pair(int128 a, int128 b) internal pure returns (int128[] memory v) {
+        v = new int128[](2);
+        (v[0], v[1]) = (a, b);
+    }
+
     function test_OverflowCumulativeDeltaSaturatesForRestOfBlock() public {
         _rawSetUp();
-        int128 r0 = dm.swap(raw, rawKey, type(int128).max - 10, 0, true);
-        assertGt(r0, 0, "first swap charged");
-        assertEq(dm.swap(raw, rawKey, 11, 0, true), 0, "cum0 leaves int128: charge 0");
+        _refInit();
+        // the transaction's net delta leaves int128 within one transaction
+        int128[] memory r = _oneTx(_pair(type(int128).max - 10, 11), _pair(0, 0));
+        assertGt(r[0], 0, "first swap charged");
+        assertEq(r[1], 0, "cum0 leaves int128: charge 0");
         _assertSaturatedForRestOfBlock();
+        assertEq(uint256(int256(r[0])), _refRun(raw).w[0], "first charge = reference");
+        _assertReferenceSaturatedFrom(1);
     }
 
     function test_OverflowNegativeCumulativeDeltaSaturates() public {
         _rawSetUp();
-        assertEq(dm.swap(raw, rawKey, 0, type(int128).min + 5, true), 0);
-        assertEq(dm.swap(raw, rawKey, 0, -6, true), 0, "cum1 below int128 min");
+        _refInit();
+        int128[] memory r = _oneTx(_pair(0, 0), _pair(type(int128).min + 5, -6));
+        assertEq(r[0], 0);
+        assertEq(r[1], 0, "cum1 below int128 min");
+        _assertSaturatedForRestOfBlock();
+        assertEq(_refRun(raw).w[0], 0, "reference: first swap uncharged");
+        _assertReferenceSaturatedFrom(1);
+    }
+
+    function test_OverflowClosedSurplusSaturates() public {
+        // Needs separate transactions (each call one transaction): skipped, and reported as
+        // skipped, without --isolate.
+        if (!isolated) vm.skip(true);
+        _rawSetUp();
+        _nextBlock();
+        oracle.setPrice(rawId, 2e18);
+        // tx 1: bracket = (2^127 - 1) * 2 = 2^128 - 2 (fits); its charge settles in token1
+        int128 r1 = dm.swap(raw, rawKey, 0, type(int128).max, false);
+        assertGt(r1, 0, "first transaction charged");
+        // tx 2: folds tx 1 (closed = 2^128 - 2, fits) and adds a small bracket
+        dm.swap(raw, rawKey, 1e18, 0, true);
+        assertEq(raw.getScope(rawKey.toId()).closedSurplus, type(uint128).max - 1, "tx 1 folded");
+        // tx 3: folding tx 2 pushes the closed surplus above 2^128 - 1
+        assertEq(dm.swap(raw, rawKey, 1e18, 0, true), 0, "closed surplus above 2^128 - 1: charge 0");
+        _assertSaturatedForRestOfBlock();
+    }
+
+    function test_OverflowGrossVolumeSaturates() public {
+        _rawSetUp();
+        // one transaction trading token1 back and forth: its net delta stays in int128 but its
+        // gross volume sum |delta1| exceeds 2^128 - 1 on the third swap
+        int128[] memory d0 = new int128[](3);
+        int128[] memory d1 = new int128[](3);
+        (d1[0], d1[1], d1[2]) = (type(int128).max, -type(int128).max, type(int128).max);
+        int128[] memory r = _oneTx(d0, d1);
+        assertGt(r[0], 0, "first swap charged");
+        assertEq(r[2], 0, "gross volume above 2^128 - 1: charge 0");
         _assertSaturatedForRestOfBlock();
     }
 

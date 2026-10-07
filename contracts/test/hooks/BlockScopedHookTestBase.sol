@@ -7,10 +7,12 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 
 import {HookMiner} from "../utils/HookMiner.sol";
 import {ParticipationAwareHook} from "../../src/hooks/ParticipationAwareHook.sol";
@@ -81,13 +83,13 @@ abstract contract BlockScopedHookTestBase is Deployers {
         require(!transientProbe.isSet(), "run with forge test --isolate (each call must be its own transaction)");
     }
 
+    /// @dev kappa = kHat + delta as a constant (the hook keeps no separate delta), no buffer.
     function _params(uint256 kHat, uint256 delta, uint16 lambdaBps_, uint16 gammaBps_)
         internal
         pure
         returns (ParticipationAwareHook.Params memory p)
     {
-        p.kHatConstant = kHat;
-        p.delta = delta;
+        p.kHatConstant = kHat + delta;
         p.lambdaBps = lambdaBps_;
         p.gammaBps = gammaBps_;
         p.stalenessThresholdSeconds = STALENESS;
@@ -95,6 +97,21 @@ abstract contract BlockScopedHookTestBase is Deployers {
 
     function _defaultParams() internal pure returns (ParticipationAwareHook.Params memory) {
         return _params(K_HAT, DELTA, LAMBDA_BPS, GAMMA_BPS);
+    }
+
+    uint64 internal constant FINAL_GAS_UNITS = 180_214;
+    uint64 internal constant FINAL_TAU_WEI = 3 gwei; // Q3
+    uint16 internal constant FINAL_GAMMA_BPS = 200; // E2 headline gamma = 0.02
+    uint32 internal constant FINAL_EPS_PPB = 2_830_000; // eps_rel = 0.283% (Q4 median, ETH/USDC)
+
+    /// @dev The evaluated configuration: kappa = K_hat (g_hat at base fee + 3 gwei, priced at the
+    /// reference), relative buffer eps_rel, lambda 0.75, gamma 0.02; this contract may update eps.
+    function _finalParams(uint256 kHat) internal view returns (ParticipationAwareHook.Params memory p) {
+        p = _params(kHat, 0, LAMBDA_BPS, FINAL_GAMMA_BPS);
+        p.gasUnits = FINAL_GAS_UNITS;
+        p.priorityFeeWei = FINAL_TAU_WEI;
+        p.epsilonRelPpb = FINAL_EPS_PPB;
+        p.epsilonAdmin = address(this);
     }
 
     function _deployHook(ParticipationAwareHook.Params memory p) internal returns (ParticipationAwareHook h) {
@@ -202,7 +219,115 @@ abstract contract BlockScopedHookTestBase is Deployers {
     }
 
     /// @dev Surplus of a scope's cumulative delta, as the hook computes it.
+    // ------------------------------------------------------------------ reference traces (ffi)
+    // Tests record every swap they make; _refRun sends the trace through
+    // experiments/block_scope_v1_ffi.py to common.fixedpoint.ScopedHookReference(scope="block",
+    // accumulation="tx_clip", buffer="rel"), so expected charges come from the reference, not
+    // from the contract. Needs `forge test --ffi`.
+
+    struct RefSwap {
+        uint256 blk;
+        uint256 tx;
+        uint256 price; // the oracle price a scope opened by this swap would lock (0 = invalid read)
+        uint256 basefee;
+        int256 d0;
+        int256 d1;
+        bool settle0;
+    }
+
+    struct RefOut {
+        uint256[] w; // W increase (the marginal charge in token0 units)
+        uint256[] token; // settlement token amount
+        uint256[] surplus; // block surplus A after the swap; type(uint256).max = no open scope / saturated
+    }
+
+    bytes32 internal constant REF_SWAP_TOPIC = keccak256("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)");
+    RefSwap[] internal refTrace;
+    uint256 internal refTx;
+    bool internal refIsolated;
+
+    function _refInit() internal {
+        delete refTrace;
+        refTx = 0;
+        transientProbe.set();
+        refIsolated = !transientProbe.isSet();
+    }
+
+    function _refPush(int256 d0, int256 d1, bool settle0, uint256 price) internal {
+        refTrace.push(RefSwap(vm.getBlockNumber(), refTx, price, refIsolated ? 0 : block.basefee, d0, d1, settle0));
+    }
+
+    /// @dev One external call ended: under --isolate the next call is a new transaction.
+    function _refEndTx() internal {
+        if (refIsolated) ++refTx;
+    }
+
+    /// @dev A real swap through the PoolManager, recorded with the core delta of its Swap event.
+    function _swapRec(address who, PoolKey memory key, IPoolManager.SwapParams memory p, uint256 price)
+        internal
+        returns (BalanceDelta d)
+    {
+        vm.recordLogs();
+        d = who == address(0) ? _swap(key, p) : _swapAs(who, key, p);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 pid = PoolId.unwrap(PoolIdLibrary.toId(key));
+        bool found;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == address(manager) && logs[i].topics[0] == REF_SWAP_TOPIC && logs[i].topics[1] == pid) {
+                (int128 a0, int128 a1,,,,) = abi.decode(logs[i].data, (int128, int128, uint160, uint128, int24, uint24));
+                _refPush(a0, a1, (p.amountSpecified < 0) != p.zeroForOne, price);
+                found = true;
+            }
+        }
+        require(found, "no Swap event");
+        _refEndTx();
+    }
+
+    function _refRun(ParticipationAwareHook h) internal returns (RefOut memory o) {
+        uint256 n = refTrace.length;
+        string[] memory cmd = new string[](9 + 7 * n);
+        cmd[0] = "python3";
+        cmd[1] = "../experiments/block_scope_v1_ffi.py";
+        cmd[2] = vm.toString(h.kappaConstant());
+        cmd[3] = vm.toString(uint256(h.lambdaBps()));
+        cmd[4] = vm.toString(uint256(h.gammaBps()));
+        cmd[5] = vm.toString(uint256(h.gasUnits()));
+        cmd[6] = vm.toString(uint256(h.priorityFeeWei()));
+        cmd[7] = vm.toString(uint256(h.gasPriceToken0Wad()));
+        cmd[8] = vm.toString(uint256(h.epsilonRelPpb()) * 1e9);
+        for (uint256 i; i < n; ++i) {
+            RefSwap memory s = refTrace[i];
+            uint256 b = 9 + 7 * i;
+            cmd[b] = vm.toString(s.blk);
+            cmd[b + 1] = vm.toString(s.tx);
+            cmd[b + 2] = vm.toString(s.price);
+            cmd[b + 3] = vm.toString(s.basefee);
+            cmd[b + 4] = vm.toString(s.d0);
+            cmd[b + 5] = vm.toString(s.d1);
+            cmd[b + 6] = s.settle0 ? "1" : "0";
+        }
+        uint256[] memory flat = abi.decode(vm.ffi(cmd), (uint256[]));
+        require(flat.length == 3 * n, "reference output length");
+        o.w = new uint256[](n);
+        o.token = new uint256[](n);
+        o.surplus = new uint256[](n);
+        for (uint256 i; i < n; ++i) {
+            (o.w[i], o.token[i], o.surplus[i]) = (flat[3 * i], flat[3 * i + 1], flat[3 * i + 2]);
+        }
+    }
+
+    /// @dev Block surplus under V1: the closed brackets plus the current transaction's bracket,
+    /// with the relative buffer ceil(eps * ref * gross / WAD^2), as the hook computes it.
     function _scopeSurplus(ParticipationAwareHook.Scope memory s) internal pure returns (uint256) {
+        int256 v = int256(s.cumulativeDelta0) + (int256(s.cumulativeDelta1) * int256(uint256(s.referencePriceWad))) / 1e18;
+        uint256 eps = uint256(s.epsilonRelPpb) * 1e9;
+        if (eps != 0 && s.txGross1 != 0) {
+            v -= int256(FullMath.mulDivRoundingUp(eps * uint256(s.referencePriceWad), s.txGross1, 1e36));
+        }
+        return uint256(s.closedSurplus) + (v > 0 ? uint256(v) : 0);
+    }
+
+    function _scopeSurplusNetOnly(ParticipationAwareHook.Scope memory s) internal pure returns (uint256) {
         int256 v = int256(s.cumulativeDelta0) + (int256(s.cumulativeDelta1) * int256(uint256(s.referencePriceWad))) / 1e18;
         return v > 0 ? uint256(v) : 0;
     }

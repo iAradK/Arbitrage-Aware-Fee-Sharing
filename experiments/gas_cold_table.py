@@ -41,6 +41,8 @@ SCENARIOS = {  # name: (description, starts a transaction)
     "invalid": ("new_block with a stale oracle: no scope, charge 0", True),
     "invalid_first_in_multi_tx": ("1st swap of a two-swap transaction, stale oracle", True),
     "invalid_second_in_tx": ("2nd swap of that transaction, stale oracle", False),
+    "charged_after_other_tx": ("charged transaction after another sender's uncharged transaction in the same block "
+                               "(V1: folds the earlier transaction), vault holds the token", True),
 }
 
 

@@ -32,6 +32,11 @@ import {MockOracle} from "../../src/mocks/MockOracle.sol";
 ///   invalid       new_block with a stale oracle (no scope opens, charge 0)
 ///   invalid_second_in_tx  second swap of one transaction with a stale oracle: the
 ///                 transaction-scoped hook has disabled the pool, the block-scoped one retries
+///   charged_after_other_tx  charged transaction after another sender's uncharged transaction
+///                 in the same block (block scope V1: its first swap folds the earlier
+///                 transaction's bracket into the block total)
+/// The block-scoped hook runs in the evaluated configuration (_finalParams: V1 with the
+/// relative buffer eps_rel = 0.283%, g_hat = 180,214, tau_hat = 3 gwei, gamma = 0.02).
 contract BlockScopedHookGasTest is BlockScopedHookTestBase {
     using PoolIdLibrary for PoolKey;
 
@@ -41,6 +46,7 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
     uint256 internal constant NO_HOOK = 2;
 
     SwapProbe internal probe;
+    SwapProbe internal other; // a second sender
     mapping(uint256 => PoolKey) internal uncharged;
     mapping(uint256 => PoolKey) internal charged;
 
@@ -49,8 +55,9 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
     function setUp() public {
         setUpBase();
         probe = _probe();
+        other = _probe();
         IHooks[3] memory hooks = [
-            IHooks(address(_deployHook(_defaultParams()))),
+            IHooks(address(_deployHook(_finalParams(K_HAT)))),
             IHooks(address(_deployTxScopedHook(K_HAT, DELTA, LAMBDA_BPS, GAMMA_BPS))),
             IHooks(address(0))
         ];
@@ -171,6 +178,23 @@ contract BlockScopedHookGasTest is BlockScopedHookTestBase {
         _record(v, "invalid_first_in_multi_tx", used[0]);
         _record(v, "invalid_second_in_tx", used[1]);
     }
+
+    function _chargedAfterOtherTx(uint256 v) internal {
+        _assertIsolated();
+        _one(charged[v], CHARGED); // an earlier block, so the vault holds the token
+        vm.roll(block.number + 1);
+        _nudge(v, charged[v], 1.2001e18);
+        uint256 v0 = _vault(currency1);
+        other.swap(charged[v], _exactIn(true, SMALL)); // another sender's uncharged transaction opens the block
+        if (v != NO_HOOK) require(_vault(currency1) == v0, "the first transaction must be uncharged");
+        uint256 used = _one(charged[v], CHARGED);
+        if (v != NO_HOOK) require(_vault(currency1) > v0, "the measured swap must be charged");
+        _record(v, "charged_after_other_tx", used);
+    }
+
+    function test_block_scoped_charged_after_other_tx() public { _chargedAfterOtherTx(0); }
+    function test_tx_scoped_charged_after_other_tx() public { _chargedAfterOtherTx(1); }
+    function test_no_hook_charged_after_other_tx() public { _chargedAfterOtherTx(2); }
 
     function test_block_scoped_charged_vault_empty() public { _chargedVaultEmpty(0); }
     function test_block_scoped_charged_second_tx() public { _chargedSecondTx(0); }

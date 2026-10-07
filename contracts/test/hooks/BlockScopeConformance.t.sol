@@ -14,32 +14,34 @@ import {MockOracle} from "../../src/mocks/MockOracle.sol";
 import {DeltaManager} from "./DeltaManager.sol";
 import {TransientProbe} from "./BlockScopedHookTestBase.sol";
 
-/// @notice The 48 E7 multi-swap sequences (validation months) replayed through the
-/// block-scoped hook in three modes, every marginal charge compared with the block-scoped
-/// integer reference (common.fixedpoint.ScopedHookReference, via
-/// experiments/e7_block_scope_vectors.py -> results/e7_block_scope/vectors.json):
+/// @notice The 48 E7 multi-swap sequences (validation months) replayed through the final hook
+/// (block scope V1 with per-transaction clipping, relative proportional buffer) in three modes;
+/// every marginal charge is compared with ScopedHookReference(scope="block",
+/// accumulation="tx_clip", buffer="rel") via experiments/e7_v1_vectors.py ->
+/// results/e7_block_scope/vectors_v1.json:
 ///   a  all fragments in one transaction
 ///   b  each fragment its own transaction, one block
 ///   c  each fragment its own transaction, 2-4 blocks (vm.roll)
-/// Run with `forge test --isolate` (asserted), so mode a and mode b really differ in
-/// transactions. Writes results/e7_block_scope/conformance_counts.json.
+/// Run with `forge test --isolate` (asserted). Writes results/e7_block_scope/conformance_counts_v1.json.
 contract BlockScopeConformanceTest is Test {
     using PoolIdLibrary for PoolKey;
 
-    string internal constant VECTORS = "../results/e7_block_scope/vectors.json";
-    string internal constant COUNTS = "../results/e7_block_scope/conformance_counts.json";
+    string internal constant VECTORS = "../results/e7_block_scope/vectors_v1.json";
+    string internal constant COUNTS = "../results/e7_block_scope/conformance_counts_v1.json";
     address internal constant VAULT = address(0x7A017);
 
     DeltaManager internal mgr;
     MockOracle internal oracle;
     TransientProbe internal probe;
+    uint256 internal refWad;
+    uint32 internal epsPpb;
 
     struct Seq {
         uint256 kHat;
-        uint256 delta;
         uint16 lambdaBps;
         uint16 gammaBps;
-        int128[] d;
+        int128[] d0;
+        int128[] d1;
         uint256[] blocksC;
         uint256[][3] expected;
     }
@@ -50,17 +52,21 @@ contract BlockScopeConformanceTest is Test {
         probe = new TransientProbe();
     }
 
-    function _load(string memory json, uint256 i) internal view returns (Seq memory s) {
+    function _ints(string memory json, string memory key) internal pure returns (int128[] memory v) {
+        string[] memory s = vm.parseJsonStringArray(json, key);
+        v = new int128[](s.length);
+        for (uint256 j; j < s.length; ++j) {
+            v[j] = int128(vm.parseInt(s[j]));
+        }
+    }
+
+    function _load(string memory json, uint256 i) internal pure returns (Seq memory s) {
         string memory p = string.concat(".sequences[", vm.toString(i), "].");
         s.kHat = vm.parseUint(vm.parseJsonString(json, string.concat(p, "k_hat_wad")));
-        s.delta = vm.parseUint(vm.parseJsonString(json, string.concat(p, "delta_wad")));
         s.lambdaBps = uint16(vm.parseJsonUint(json, string.concat(p, "lambda_bps")));
         s.gammaBps = uint16(vm.parseJsonUint(json, string.concat(p, "gamma_bps")));
-        string[] memory ds = vm.parseJsonStringArray(json, string.concat(p, "deltas"));
-        s.d = new int128[](ds.length);
-        for (uint256 j; j < ds.length; ++j) {
-            s.d[j] = int128(vm.parseInt(ds[j]));
-        }
+        s.d0 = _ints(json, string.concat(p, "d0"));
+        s.d1 = _ints(json, string.concat(p, "d1"));
         s.blocksC = vm.parseJsonUintArray(json, string.concat(p, "blocks_c"));
         string[3] memory keys = ["expected_a", "expected_b", "expected_c"];
         for (uint256 m; m < 3; ++m) {
@@ -72,19 +78,18 @@ contract BlockScopeConformanceTest is Test {
         }
     }
 
-    /// @dev A fresh hook and pool for one sequence and mode, oracle price 1.0 (token0 deltas).
     function _fresh(Seq memory s, uint256 salt) internal returns (ParticipationAwareHook hook, PoolKey memory key) {
         ParticipationAwareHook.Params memory p;
         p.kHatConstant = s.kHat;
-        p.delta = s.delta;
         p.lambdaBps = s.lambdaBps;
         p.gammaBps = s.gammaBps;
         p.stalenessThresholdSeconds = 3600;
+        p.epsilonRelPpb = epsPpb;
         hook = new ParticipationAwareHook(IPoolManager(address(mgr)), IReferenceOracle(address(oracle)), VAULT, p);
         key = PoolKey(
             Currency.wrap(address(uint160(0x1000 + salt))), Currency.wrap(address(uint160(0x2000 + salt))), 3000, 60, IHooks(address(hook))
         );
-        oracle.setPrice(PoolId.unwrap(key.toId()), 1e18);
+        oracle.setPrice(PoolId.unwrap(key.toId()), refWad);
     }
 
     function _check(uint256[] memory exp, uint256 j, int128 got) internal pure returns (uint256) {
@@ -96,21 +101,22 @@ contract BlockScopeConformanceTest is Test {
         require(!probe.isSet(), "run with forge test --isolate");
         string memory json = vm.readFile(VECTORS);
         uint256 n = vm.parseJsonUint(json, ".n_sequences");
+        refWad = vm.parseUint(vm.parseJsonString(json, ".reference_wad"));
+        epsPpb = uint32(vm.parseJsonUint(json, ".eps_rel_ppb"));
         uint256[3] memory mismatch;
         uint256[3] memory charged;
         uint256 fragments;
         uint256 blk = vm.getBlockNumber(); // not block.number: via_ir may re-read it after vm.roll
         for (uint256 i; i < n; ++i) {
             Seq memory s = _load(json, i);
-            int128[] memory zeros = new int128[](s.d.length);
-            fragments += s.d.length;
+            fragments += s.d0.length;
 
             // a: one transaction in one block
             blk += 10;
             vm.roll(blk);
             (ParticipationAwareHook ha, PoolKey memory ka) = _fresh(s, 3 * i);
-            int128[] memory got = mgr.swapMany(ha, ka, s.d, zeros, true);
-            for (uint256 j; j < s.d.length; ++j) {
+            int128[] memory got = mgr.swapMany(ha, ka, s.d0, s.d1, true);
+            for (uint256 j; j < s.d0.length; ++j) {
                 mismatch[0] += _check(s.expected[0], j, got[j]);
                 if (got[j] > 0) ++charged[0];
             }
@@ -119,8 +125,8 @@ contract BlockScopeConformanceTest is Test {
             blk += 10;
             vm.roll(blk);
             (ParticipationAwareHook hb, PoolKey memory kb) = _fresh(s, 3 * i + 1);
-            for (uint256 j; j < s.d.length; ++j) {
-                int128 r = mgr.swap(hb, kb, s.d[j], 0, true);
+            for (uint256 j; j < s.d0.length; ++j) {
+                int128 r = mgr.swap(hb, kb, s.d0[j], s.d1[j], true);
                 mismatch[1] += _check(s.expected[1], j, r);
                 if (r > 0) ++charged[1];
             }
@@ -130,12 +136,12 @@ contract BlockScopeConformanceTest is Test {
             vm.roll(blk);
             (ParticipationAwareHook hc, PoolKey memory kc) = _fresh(s, 3 * i + 2);
             uint256 start = blk;
-            for (uint256 j; j < s.d.length; ++j) {
+            for (uint256 j; j < s.d0.length; ++j) {
                 if (start + s.blocksC[j] != vm.getBlockNumber()) {
                     vm.roll(start + s.blocksC[j]);
                     vm.warp(block.timestamp + 12);
                 }
-                int128 r = mgr.swap(hc, kc, s.d[j], 0, true);
+                int128 r = mgr.swap(hc, kc, s.d0[j], s.d1[j], true);
                 mismatch[2] += _check(s.expected[2], j, r);
                 if (r > 0) ++charged[2];
             }

@@ -38,50 +38,62 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
         (oldPool,) = _pool(IHooks(address(old)), 1.2e18);
     }
 
-    /// @dev Core delta of the last swap on the pool: difference of the scope's cumulative
-    /// deltas (the swap opened the scope when `opened`, so the cumulative is the delta).
-    function _lastDelta(ParticipationAwareHook.Scope memory before, ParticipationAwareHook.Scope memory afterSwap_, bool opened)
+    /// @dev Core delta of the last swap on the pool. Under --isolate every swap is its own
+    /// transaction, so with per-transaction accounting (V1) the scope's current transaction
+    /// delta is exactly that swap's delta.
+    function _lastDelta(ParticipationAwareHook.Scope memory, ParticipationAwareHook.Scope memory afterSwap_, bool)
         internal
         pure
         returns (int256 d0, int256 d1)
     {
-        d0 = int256(afterSwap_.cumulativeDelta0) - (opened ? int256(0) : int256(before.cumulativeDelta0));
-        d1 = int256(afterSwap_.cumulativeDelta1) - (opened ? int256(0) : int256(before.cumulativeDelta1));
+        d0 = int256(afterSwap_.cumulativeDelta0);
+        d1 = int256(afterSwap_.cumulativeDelta1);
     }
 
     // ---------------------------------------------------------------------------------
-    // Reversal across transactions: no refund, total = max_j F(A_j) (Theorem 1(b)).
+    // Reversal across transactions (V1): an adverse transaction's negative surplus is clipped
+    // at zero, so it neither lowers the block surplus nor refunds anything; W = F(A) after
+    // every transaction and the total paid is F(A) of the final block total.
     // ---------------------------------------------------------------------------------
 
     function test_ReversalAcrossTransactions() public {
         _assertIsolated();
         IPoolManager.SwapParams[5] memory path = [
             _exactOut(true, 40e18), // forward, charged
-            _exactIn(false, 30e18), // adverse: sells token1 back, lowers the surplus
-            _exactOut(true, 10e18), // recovery below the previous peak: pays nothing
-            _exactOut(true, 40e18), // recovery above the peak: pays only the excess
+            _exactIn(false, 30e18), // adverse: its bracket is clipped at zero
+            _exactOut(true, 10e18), // recovery: a new transaction, charged on its own bracket
+            _exactOut(true, 40e18),
             _exactIn(false, 5e18) // adverse again
         ];
+        bool[5] memory adverse = [false, true, false, false, true];
         address[5] memory senders = [_actor(1), _actor(2), _actor(3), _actor(1), _actor(4)];
-        uint256 peak;
+        _refInit();
+        uint256[5] memory r;
+        uint256[5] memory A;
         uint256 paid;
-        uint256 previousW;
         for (uint256 j; j < path.length; ++j) {
             uint256 v0 = _vault(currency0);
-            _swapAs(senders[j], pool, path[j]);
-            uint256 r = _vault(currency0) - v0;
-            ParticipationAwareHook.Scope memory s = hook.getScope(poolId);
-            uint256 target = _F(hook, s, _scopeSurplus(s));
-            if (target > peak) peak = target;
-            paid += r;
-            assertEq(s.blockNumber, block.number, "one block");
-            assertEq(s.watermark, peak, "W = max_j F(A_j)");
-            assertEq(r, s.watermark - previousW, "r_j = W_j - W_{j-1} >= 0, no refund");
-            previousW = s.watermark;
+            _swapRec(senders[j], pool, path[j], 1.2e18);
+            r[j] = _vault(currency0) - v0;
+            A[j] = hook.scopeSurplus(poolId);
+            paid += r[j];
+            assertEq(hook.getScope(poolId).blockNumber, block.number, "one block");
         }
-        assertEq(paid, peak, "total paid = max_j F(A_j)");
-        ParticipationAwareHook.Scope memory last = hook.getScope(poolId);
-        assertGt(peak, _F(hook, last, _scopeSurplus(last)), "the path ends below its peak, and nothing was refunded");
+        // expected values from ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel")
+        RefOut memory e = _refRun(hook);
+        uint256 expectedTotal;
+        for (uint256 j; j < path.length; ++j) {
+            assertEq(r[j], e.w[j], "charge = reference");
+            assertEq(A[j], e.surplus[j], "block surplus = reference");
+            if (j > 0) assertGe(e.surplus[j], e.surplus[j - 1], "the block surplus never falls");
+            if (adverse[j]) {
+                assertEq(e.surplus[j], e.surplus[j - 1], "an adverse transaction adds nothing");
+                assertEq(e.w[j], 0, "and pays nothing");
+            }
+            expectedTotal += e.w[j];
+        }
+        assertEq(paid, expectedTotal, "total paid = reference total");
+        assertEq(hook.getScope(poolId).watermark, expectedTotal, "W = total collected, no refund");
     }
 
     // ---------------------------------------------------------------------------------
@@ -90,17 +102,21 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
 
     function test_OracleUpdateMidBlockDoesNotMoveLockedReference() public {
         _assertIsolated();
-        _swap(pool, _exactOut(true, 20e18));
+        _refInit();
+        _swapRec(address(0), pool, _exactOut(true, 20e18), 1.2e18);
         oracle.setPrice(PoolId.unwrap(poolId), 1.5e18);
 
         ParticipationAwareHook.Scope memory before = hook.getScope(poolId);
         uint256 snap = vm.snapshotState();
         uint256 v0 = _vault(currency0);
-        _swap(pool, _exactOut(true, 20e18));
+        _swapRec(address(0), pool, _exactOut(true, 20e18), 1.5e18);
         uint256 r = _vault(currency0) - v0;
         ParticipationAwareHook.Scope memory s = hook.getScope(poolId);
         assertEq(s.referencePriceWad, 1.2e18, "reference locked for the block");
-        assertEq(s.watermark, _F(hook, s, _scopeSurplus(s)), "charged at the locked reference");
+        // expected charge from ScopedHookReference (computed before the revert, which also
+        // reverts the recorded trace)
+        RefOut memory e = _refRun(hook);
+        assertEq(r, e.w[1], "charge = reference (locked reference 1.2)");
 
         // quote() before the swap predicted exactly this charge.
         (int256 d0, int256 d1) = _lastDelta(before, s, false);
@@ -111,10 +127,12 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
         vm.roll(block.number + 1);
         snap = vm.snapshotState();
         v0 = _vault(currency0);
-        _swap(pool, _exactOut(true, 20e18));
+        _swapRec(address(0), pool, _exactOut(true, 20e18), 1.5e18);
         r = _vault(currency0) - v0;
         s = hook.getScope(poolId);
         assertEq(s.referencePriceWad, 1.5e18, "new reference locked in the next block");
+        e = _refRun(hook);
+        assertEq(r, e.w[1], "charge = reference (new block, reference 1.5)");
         (d0, d1) = _lastDelta(s, s, true);
         vm.revertToState(snap);
         assertEq(hook.quote(pool, d0, d1), r, "quote = charge of the opening swap");
@@ -157,7 +175,8 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
         _assertIsolated();
         count = uint8(bound(count, 2, 8));
         uint256 spill = (KAPPA * (10_000 - GAMMA_BPS)) / 10_000 + 1;
-        ParticipationAwareHook.Scope memory before;
+        _refInit();
+        uint256[] memory r = new uint256[](count);
         for (uint256 j; j < count; ++j) {
             uint256 x = uint256(keccak256(abi.encode(seed, j)));
             // Mostly correcting swaps of varied size; one in four is adverse.
@@ -165,14 +184,18 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
                 ? _exactIn(false, bound(x >> 8, 1e15, 20e18))
                 : _exactOut(true, bound(x >> 8, 1e15, 40e18));
             uint256 v0 = _vault(currency0);
-            _swapAs(_actor(x % 5), pool, p);
-            uint256 r = _vault(currency0) - v0;
-            ParticipationAwareHook.Scope memory s = hook.getScope(poolId);
-            (int256 d0, int256 d1) = _lastDelta(before, s, j == 0);
-            int256 own = d0 + (d1 * int256(uint256(s.referencePriceWad))) / 1e18;
+            _swapRec(_actor(x % 5), pool, p, 1.2e18);
+            r[j] = _vault(currency0) - v0;
+        }
+        RefOut memory e = _refRun(hook);
+        for (uint256 j; j < count; ++j) {
+            assertEq(r[j], e.w[j], "charge = reference");
+            // a_j from the swap's own core delta (Swap event) at the locked reference 1.2
+            RefSwap memory t = refTrace[j];
+            int256 own = t.d0 + (t.d1 * int256(uint256(1.2e18))) / 1e18;
             uint256 ownSurplus = own > 0 ? uint256(own) : 0;
-            assertLe(r, _F(hook, s, ownSurplus) + spill + 4, "r_j <= F(a_j) + (1 - gamma) * kappa");
-            before = s;
+            (uint256 fOwn,) = hook.computeTransfer(ownSurplus, KAPPA, uint256(LAMBDA_BPS) * 1e14, uint256(GAMMA_BPS) * 1e14, 0);
+            assertLe(r[j], fOwn + spill + 4, "r_j <= F(a_j) + (1 - gamma) * kappa");
         }
     }
 

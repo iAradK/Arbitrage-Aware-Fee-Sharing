@@ -86,12 +86,26 @@ class ScopedHookReference:
 
     The transaction-scoped contract treats an invalid oracle at the first swap as disabling the pool for the rest
     of the transaction, and it has no uint128/int128 limits; neither difference matters for the checks here.
+
+    `accumulation` selects how the scope's surplus A is accumulated (the watermark and settlement are unchanged):
+      - "net" (the deployed hook): A = [pi . (sum of all deltas in the scope)]^+;
+      - "tx_clip" (V1, block scope only): A = sum over the completed transactions of the block of
+        [pi . (deltas of that transaction)]^+, plus [pi . (running deltas of the current transaction)]^+. A swap
+        whose transaction differs from the previous swap's folds the previous transaction into the sum;
+      - "swap_clip" (V2): A = sum over the scope's swaps of [pi . (deltas of that swap)]^+.
+    Each bracket is `hook_surplus` (product rounded toward zero, then clipped). The sum C of folded brackets is
+    uint128; leaving that range saturates W like the other limits.
     """
 
+    ACCUMULATIONS = ("net", "tx_clip", "swap_clip")
+
     def __init__(self, k_const: int, delta: int, lam_bps: int, gamma_bps: int, gas_units: int = 0,
-                 tau_wei: int = 0, gas_price_token0_wad: int = 0, scope: str = "block"):
+                 tau_wei: int = 0, gas_price_token0_wad: int = 0, scope: str = "block", accumulation: str = "net"):
         if not 0 <= lam_bps <= 10_000 or not 0 <= gamma_bps < 10_000 or scope not in ("block", "tx"):
             raise ValueError("bad ScopedHookReference parameters")
+        if accumulation not in self.ACCUMULATIONS or (accumulation == "tx_clip" and scope != "block"):
+            raise ValueError("bad ScopedHookReference accumulation")
+        self.accumulation = accumulation
         self.kappa_const = min(k_const + delta, U128_MAX)
         self.gas_units, self.tau_wei, self.gas_price = gas_units, tau_wei, gas_price_token0_wad
         self.lam_bps, self.gamma_bps, self.scope = lam_bps, gamma_bps, scope
@@ -118,7 +132,8 @@ class ScopedHookReference:
             if not oracle_price_wad or oracle_price_wad > U128_MAX:
                 return 0
             s = {"key": key, "W": 0, "lam": self.lam_bps, "gam": self.gamma_bps, "cum0": d0, "cum1": d1,
-                 "ref": oracle_price_wad, "kappa": self.kappa(basefee, oracle_price_wad), "saturated": False}
+                 "ref": oracle_price_wad, "kappa": self.kappa(basefee, oracle_price_wad), "saturated": False,
+                 "tx": tx, "C": 0}
             self.pools[pool] = s
             if not (I128_MIN <= d0 <= I128_MAX and I128_MIN <= d1 <= I128_MAX):
                 s["saturated"] = True
@@ -126,12 +141,21 @@ class ScopedHookReference:
         else:
             if s["saturated"]:
                 return 0
-            c0, c1 = s["cum0"] + d0, s["cum1"] + d1
+            if self.accumulation == "tx_clip" and s["tx"] != tx:     # fold the completed transaction
+                s["C"] += hook_surplus(s["cum0"], s["cum1"], s["ref"])
+                c0, c1, s["tx"] = d0, d1, tx
+            else:
+                c0, c1 = s["cum0"] + d0, s["cum1"] + d1
             if not (I128_MIN <= c0 <= I128_MAX and I128_MIN <= c1 <= I128_MAX):
                 s["saturated"] = True
                 return 0
             s["cum0"], s["cum1"] = c0, c1
-        a = hook_surplus(s["cum0"], s["cum1"], s["ref"])
+        if self.accumulation == "swap_clip":
+            s["C"] += hook_surplus(d0, d1, s["ref"])
+        if s["C"] > U128_MAX:
+            s["saturated"] = True
+            return 0
+        a = self.surplus(pool)
         target, _ = transfer_wad(a, s["kappa"], s["lam"] * BPS_TO_WAD, s["gam"] * BPS_TO_WAD, 0)
         if target <= s["W"]:
             return 0
@@ -151,6 +175,15 @@ class ScopedHookReference:
         s["W"] += collected
         self.last_token_amount = token
         return collected
+
+    def surplus(self, pool) -> int:
+        """The open scope's accumulated surplus A under the chosen accumulation (0 without a scope)."""
+        s = self.pools.get(pool)
+        if s is None:
+            return 0
+        if self.accumulation == "swap_clip":
+            return s["C"]
+        return s["C"] + hook_surplus(s["cum0"], s["cum1"], s["ref"])
 
 
 def prefix_surplus_wad(deltas0: Sequence[int], deltas1: Sequence[int], pi0_wad: int, pi1_wad: int) -> list[int]:

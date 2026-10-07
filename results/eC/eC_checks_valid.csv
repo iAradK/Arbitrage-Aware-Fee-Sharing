@@ -1,4 +1,0 @@
-pool,variant,check,recomputed,stored
-eth_usdc_005,raw,"rolling eps_S median, d=1, k=1, valid",16.79563755169147,16.79563755169147
-eth_wbtc_030,corr24h,"rolling eps_S median, d=1, k=1, valid",73.99110876330717,73.99110876330717
-eth_wbtc_030,raw,"rolling eps_S median, d=1, k=1, valid",58.95287470359423,58.95287470359423

@@ -1,5 +1,0 @@
-check,ok,n_rows,pool,variant,R_usd,n_opportunities,n_dropped,e2_protection_recomputed,e2_n_executed_recomputed
-"fixed rule, tau_hat 0.05 gwei reproduces eB_opportunities_valid (buffered, basefee): N, mode, executed_1, executed_N, l_star, charge_1, charge_N, payoff_1, payoff_N",True,28496.0,,,,,,,
-E2 buffered totals recomputed,,,eth_usdc_005,raw,1.3407785537220287,2605.0,1.0,24598.89629259227,2606.0
-E2 buffered totals recomputed,,,eth_wbtc_030,raw,4.648058562149251,515.0,0.0,10431.58189172601,515.0
-E2 buffered totals recomputed,,,eth_wbtc_030,corr24h,4.917358635714901,442.0,0.0,8480.381061645265,442.0

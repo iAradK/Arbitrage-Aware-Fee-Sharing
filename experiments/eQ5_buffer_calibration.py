@@ -18,6 +18,11 @@ Extensions (--variants grid / dev; written under --tag, the base outputs are not
               add_c{c}_m{m}  eps = eps_p95 + c * (dev - m * fee)^+
             In Experiment B's harness each block of a split recomputes dev from the pool price before its piece and that
             block's reference (eps_p95 stays the opportunity's).
+  daily     (--variants daily) p95_daily: eps as an admin-set contract would hold it. Once per day, at 00:00 UTC, the
+            rolling 95th percentile of the errors stamped before that time (same window and seed) is rounded up to whole
+            parts per billion (epsilonRelPpb = ceil(1e9 x value)) and held for the whole day; the observed-swap replay uses
+            eps_wad = epsilonRelPpb x 1e9 exactly. eQ5_eps_daily_vs_rolling_<tag>_valid.csv compares it with the
+            per-candidate rolling p95 at the same query times.
 Reported per variant:
   observed swaps (Experiment C's validation swaps): block V1 transfer with and without the 294 ETH block, tipped
     violations (a), spillover (b), and coverage of overestimation (S_hat - S <= buffer) on the standalone-feasible swaps
@@ -61,8 +66,23 @@ D = 1
 BASE = {"p95": ("q", 0.95), "p975": ("q", 0.975), "p99": ("q", 0.99), "dev_p95": ("bucket", 0.95)}
 GRID = {f"p{str(q)[2:]}": ("q", q) for q in (0.955, 0.96, 0.965, 0.97, 0.98, 0.985)}
 DEV = {f"{form}_c{c:g}_m{m:g}": (form, 0.95, c, m) for form in ("max", "add") for c in (0.25, 0.5, 1.0) for m in (2, 4, 6)}
-GROUPS = {"base": BASE, "grid": GRID, "dev": DEV}
+DAILY = {"p95_daily": ("daily", 0.95)}
+GROUPS = {"base": BASE, "grid": GRID, "dev": DEV, "daily": DAILY}
 VARIANTS = dict(BASE)                                       # the variants of this run (set in main)
+EPS_DIFF = []                                               # daily vs per-candidate rolling eps (filled when p95_daily runs)
+
+
+def eps_diff(key, var, part, eps):
+    """How far the daily, whole-ppb eps lies from the per-candidate rolling p95 at the same query times."""
+    if "p95_daily" not in eps:
+        return
+    r, d = eps["p95"], eps["p95_daily"]
+    rel = (d - r) / r
+    EPS_DIFF.append({"pool": key, "variant": var, "part": part, "n_queries": len(r), "eps_rolling_median": float(np.median(r)),
+                     "eps_daily_median": float(np.median(d)), "rel_diff_median": float(np.median(rel)),
+                     "rel_diff_p05": float(np.quantile(rel, 0.05)), "rel_diff_p95": float(np.quantile(rel, 0.95)),
+                     "rel_diff_mean_abs": float(np.mean(np.abs(rel))), "abs_diff_max": float(np.max(np.abs(d - r))),
+                     "share_daily_below_rolling": float(np.mean(d < r))})
 EDGE_Q = (0.50, 0.80, 0.95)
 POOL_VARIANTS = q4.POOL_VARIANTS
 NS = (1, 2, 5, 75)
@@ -141,6 +161,12 @@ def eps_variants(cand, seed, query_t, query_dev, edges, cfg2, fee, floors=None) 
         kind, qv = spec[0], spec[1]
         c = copy.deepcopy(cfg2)
         c["eps_quantile"] = qv
+        if kind == "daily":
+            day = np.asarray(query_t).astype("datetime64[D]").astype("datetime64[ns]")
+            v = q4.rolling_q(cand["t"].to_numpy(), cand["err_rel"].to_numpy(), cand["bf"].to_numpy(),
+                             st, seed["err_rel"].to_numpy(), day, c)
+            out[name] = np.ceil(v * 1e9) / 1e9                # whole ppb, rounded up, held for the day
+            continue
         if kind in ("q", "max", "add"):
             if qv not in cache:
                 cache[qv] = q4.rolling_q(cand["t"].to_numpy(), cand["err_rel"].to_numpy(), cand["bf"].to_numpy(),
@@ -185,6 +211,7 @@ def observed(key, var, cfg2, edges, sw, q4m, q4ch, checks):
     assert np.all(tt[pos] == minute) and actmask[pos].all()
     dev_sw = np.abs(np.log(al["price_pre"].to_numpy() / al["pi_hook"].to_numpy()))
     eps = eps_variants(cand, seed, minute, dev_sw, edges, cfg2, pool.fee)
+    eps_diff(key, var, "observed_swaps", eps)
     stored = pd.read_csv(RESULTS / "eQ4" / f"eQ4_eps_series_{key}_{var}_valid.csv.gz", float_precision="round_trip")
     st_eps = stored.set_index(q4.naive_ns(pd.DatetimeIndex(stored["t"])))["eps_P_rel"].reindex(minute).to_numpy()
     ok = bool(np.array_equal(eps["p95"], st_eps))
@@ -205,7 +232,8 @@ def observed(key, var, cfg2, edges, sw, q4m, q4ch, checks):
     kc = np.floor(R_usd / usd * s0)
     for name, e in eps.items():
         assert np.isfinite(e).all()
-        res = q4.replay_rule(al, key, kc, np.ceil(e * WAD), "rel", int(TAU), gas_units, lam_bps, gam_bps)
+        e_wad = np.round(e * 1e9) * 1e9 if VARIANTS[name][0] == "daily" else np.ceil(e * WAD)   # daily: ppb x 1e9 exactly
+        res = q4.replay_rule(al, key, kc, e_wad, "rel", int(TAU), gas_units, lam_bps, gam_bps)
         x = q4.swap_frame(df, res, to_usd)
         if name == "p95":                                       # Q4's stored prop_rel charges
             st = q4ch[(q4ch.pool == key) & (q4ch.variant == var) & (q4ch.rule == "prop_rel")].reset_index(drop=True)
@@ -278,6 +306,7 @@ def crossblock(key, var, cfg2, edges, q4cb, checks, blocks_all, gas, Fint, lam, 
     dev_rule = np.abs(np.log(pp[ex, 1] / Ph[ex]))              # the rule path's pre-action deviation
     floors = {}
     eps = eps_variants(cand, seed, cand["t"].to_numpy()[ex], dev_rule, edges, cfg2, pool.fee, floors)
+    eps_diff(key, var, "crossblock_opportunities", eps)
     bts, Nmax, G = blocks_all["ts"], max(NS), cfg2["grid_points"]
     gas_u = cfg2["gas_units"] + cfg2["hook_overhead_gas"]
     tol = 1e-9 * max(1.0, R_usd)
@@ -343,14 +372,14 @@ def crossblock(key, var, cfg2, edges, q4cb, checks, blocks_all, gas, Fint, lam, 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", choices=["valid", "test"], default="valid")
-    ap.add_argument("--variants", default="base", help="comma-separated groups (base, grid, dev) or variant names; "
+    ap.add_argument("--variants", default="base", help="comma-separated groups (base, grid, dev, daily) or variant names; "
                                                        "p95 is always included (the Q4 checks)")
     ap.add_argument("--parts", default="observed,crossblock")
     ap.add_argument("--tag", default="", help="output tag (required unless the base run)")
     a = ap.parse_args()
     if a.split != "valid":
         raise SystemExit("Q5 is validation-only: the test months are refused")
-    allv = {**BASE, **GRID, **DEV}
+    allv = {**BASE, **GRID, **DEV, **DAILY}
     sel = {"p95": BASE["p95"]}
     for tok in a.variants.split(","):
         sel.update(GROUPS[tok] if tok in GROUPS else {tok: allv[tok]})
@@ -388,7 +417,8 @@ def main():
     obs, cb = pd.DataFrame(obs), pd.DataFrame(cb)
     outs = []
     for nm, frame in [(f"eQ5_observed_swaps{sfx}_valid.csv", obs), (f"eQ5_crossblock{sfx}_valid.csv", cb),
-                      (f"eQ5_bucket_edges{sfx}_train.csv", pd.DataFrame(edges_rows)), (f"eQ5_checks{sfx}_valid.csv", pd.DataFrame(checks))]:
+                      (f"eQ5_bucket_edges{sfx}_train.csv", pd.DataFrame(edges_rows)), (f"eQ5_checks{sfx}_valid.csv", pd.DataFrame(checks)),
+                      (f"eQ5_eps_daily_vs_rolling{sfx}_valid.csv", pd.DataFrame(EPS_DIFF))]:
         if len(frame):
             frame.to_csv(OUT / nm, index=False)
             outs.append(OUT / nm)

@@ -26,6 +26,7 @@ results/
 # Large or temporary raw files
 *.json
 *.csv
+!NOTES/results_index.csv
 *.parquet
 *.pkl
 *.pickle

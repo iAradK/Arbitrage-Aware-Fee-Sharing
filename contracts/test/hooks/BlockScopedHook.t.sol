@@ -128,16 +128,19 @@ contract BlockScopedHookTest is BlockScopedHookTestBase {
     /// @dev Exact input charges the output token (token1) at the reference 1.2.
     function test_Settlement_ExactInput_ChargesOutputTokenToVault() public {
         oracle.setPrice(PoolId.unwrap(poolAId), 1.2e18);
-        BalanceDelta swapperDelta = _swap(poolA, _exactIn(true, 100e18));
+        _refInit();
+        BalanceDelta swapperDelta = _swapRec(address(0), poolA, _exactIn(true, 100e18), 1.2e18);
         ParticipationAwareHook.Scope memory s = hook.getScope(poolAId);
+        // the swap's core delta from its Swap event (the transaction's own state is transient)
+        (int256 core0, int256 core1) = _lastRef();
 
         uint256 target = _F(hook, s, _scopeSurplus(s));
         uint256 expectedTokens = (target * 1e18) / 1.2e18;
         assertGt(expectedTokens, 0, "scenario must produce a positive charge");
         assertEq(_vault(currency1), expectedTokens, "vault claims");
         assertEq(_vault(currency0), 0, "no charge in the specified token");
-        assertEq(int256(swapperDelta.amount1()), int256(s.cumulativeDelta1) - int256(expectedTokens), "output reduced");
-        assertEq(int256(swapperDelta.amount0()), int256(s.cumulativeDelta0), "input unchanged");
+        assertEq(int256(swapperDelta.amount1()), core1 - int256(expectedTokens), "output reduced");
+        assertEq(int256(swapperDelta.amount0()), core0, "input unchanged");
         assertLe(s.watermark, target, "watermark never exceeds the cumulative target");
         assertGe(uint256(s.watermark) * 1e18, expectedTokens * 1.2e18, "watermark covers the value collected");
     }
@@ -145,15 +148,17 @@ contract BlockScopedHookTest is BlockScopedHookTestBase {
     /// @dev Exact output charges the input token (token0, the numeraire): no remainder.
     function test_Settlement_ExactOutput_ChargesInputTokenToVault() public {
         oracle.setPrice(PoolId.unwrap(poolAId), 1.2e18);
-        BalanceDelta swapperDelta = _swap(poolA, _exactOut(true, 100e18));
+        _refInit();
+        BalanceDelta swapperDelta = _swapRec(address(0), poolA, _exactOut(true, 100e18), 1.2e18);
         ParticipationAwareHook.Scope memory s = hook.getScope(poolAId);
+        (int256 core0, int256 core1) = _lastRef(); // core delta from the Swap event
 
         uint256 target = _F(hook, s, _scopeSurplus(s));
         assertGt(target, 0, "scenario must produce a positive charge");
         assertEq(_vault(currency0), target, "vault claims");
         assertEq(_vault(currency1), 0, "no charge in the specified token");
-        assertEq(int256(swapperDelta.amount0()), int256(s.cumulativeDelta0) - int256(target), "input increased");
-        assertEq(int256(swapperDelta.amount1()), int256(s.cumulativeDelta1), "output unchanged");
+        assertEq(int256(swapperDelta.amount0()), core0 - int256(target), "input increased");
+        assertEq(int256(swapperDelta.amount1()), core1, "output unchanged");
         assertEq(s.watermark, target);
     }
 
@@ -269,11 +274,14 @@ contract BlockScopedHookTest is BlockScopedHookTestBase {
 
         vm.roll(block.number + 1);
         oracle.setPrice(PoolId.unwrap(poolAId), 1.1e18);
-        BalanceDelta d = _swap(poolA, _exactOut(true, 20e18));
+        _refInit();
+        _swapRec(address(0), poolA, _exactOut(true, 20e18), 1.1e18);
+        (int256 core0, int256 core1) = _lastRef();
         ParticipationAwareHook.Scope memory s2 = hook.getScope(poolAId);
         assertEq(s2.blockNumber, block.number);
         assertEq(s2.referencePriceWad, 1.1e18, "reference re-locked");
-        assertEq(int256(s2.cumulativeDelta1), int256(d.amount1()), "cumulative delta reset to this swap");
+        // read from a later transaction, the scope shows everything folded into P
+        assertEq(s2.closedSurplus, _txBracket(s2, core0, core1), "block surplus reset to this swap's bracket");
         assertEq(s2.watermark, _F(hook, s2, _scopeSurplus(s2)), "watermark reset and recomputed");
         assertLt(s2.watermark, s1.watermark);
     }

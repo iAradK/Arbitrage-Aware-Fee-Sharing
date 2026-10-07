@@ -102,13 +102,17 @@ contract BlockScopeBoundaryTest is BlockScopeBoundaryBase {
         (uint256 c3, int256 d0, int256 d1) = _buy(alice, 20e18);
         ParticipationAwareHook.Scope memory t = hook.getScope(poolId);
         assertEq(t.blockNumber, b + 1, "new scope");
-        assertEq(int256(t.cumulativeDelta0), d0, "accumulator reset: holds only this swap (token0)");
-        assertEq(int256(t.cumulativeDelta1), d1, "accumulator reset: holds only this swap (token1)");
+        assertEq(hook.scopeSurplus(poolId), _txBracket(t, d0, d1), "accumulator reset: holds only this swap");
+        if (!isolated) {
+            // the transaction is still open, so its transient fields are readable
+            assertEq(int256(t.cumulativeDelta0), d0, "accumulator reset: holds only this swap (token0)");
+            assertEq(int256(t.cumulativeDelta1), d1, "accumulator reset: holds only this swap (token1)");
+            assertEq(t.closedSurplus, 0, "no closed transactions carried over");
+        }
         assertEq(t.referencePriceWad, 1.5e18, "reference re-locked");
         assertEq(t.kappa, _kappa(block.basefee, 1.5e18), "kappa re-locked (gas part priced at the new reference)");
         assertTrue(t.kappa != s.kappa, "kappa changed with the reference");
         assertEq(t.watermark, c3, "W restarts at 0");
-        assertEq(t.closedSurplus, 0, "no closed transactions carried over");
         // expected charges from ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel")
         RefOut memory e = _refRun(hook);
         assertEq(c1, e.w[0], "charge 1 = reference");
@@ -146,10 +150,12 @@ contract BlockScopeBoundaryTest is BlockScopeBoundaryBase {
         assertEq(s1.referencePriceWad, 1.2e18, "reference stays locked");
         assertEq(s1.kappa, s0.kappa, "kappa stays locked");
         if (isolated) {
-            // Bob's swap is a new transaction: Alice's bracket is folded into the block total.
-            assertEq(s1.closedSurplus, _scopeSurplus(s0), "previous transaction folded");
-            assertEq(int256(s1.cumulativeDelta0), d0, "current transaction = Bob's swap");
-            assertEq(int256(s1.cumulativeDelta1), d1);
+            // Bob's swap is a new transaction: Alice's bracket is folded into the block total. Read
+            // from a later transaction, Bob's bracket is folded too (closedSurplus = P) and the
+            // transient transaction fields are 0.
+            assertEq(s1.closedSurplus, _scopeSurplus(s0) + _txBracket(s1, d0, d1), "previous transaction folded");
+            assertEq(s1.cumulativeDelta0, 0, "current transaction's state is transient");
+            assertEq(s1.cumulativeDelta1, 0);
         } else {
             // one transaction: the swaps net as before
             assertEq(s1.closedSurplus, 0);
@@ -204,8 +210,12 @@ contract BlockScopeBoundaryTest is BlockScopeBoundaryBase {
             (uint256 c1, int256 d0, int256 d1) = _buy(bob, 40e18);
             ParticipationAwareHook.Scope memory s1 = hook.getScope(poolId);
             assertEq(s1.blockNumber, block.number, "retry opened the scope");
-            assertEq(int256(s1.cumulativeDelta0), d0, "scope holds only the later swap");
-            assertEq(int256(s1.cumulativeDelta1), d1);
+            assertEq(hook.scopeSurplus(poolId), _txBracket(s1, d0, d1), "scope holds only the later swap");
+            if (!isolated) {
+                // the transaction is still open, so its transient fields are readable
+                assertEq(int256(s1.cumulativeDelta0), d0, "scope holds only the later swap");
+                assertEq(int256(s1.cumulativeDelta1), d1);
+            }
             assertGt(c1, 0);
             assertEq(c1, _F(hook, s1, _scopeSurplus(s1)), "charged as an unsplit swap");
         }
@@ -301,6 +311,45 @@ contract BlockScopeBoundaryTest is BlockScopeBoundaryBase {
         (v[0], v[1]) = (a, b);
     }
 
+    /// @dev quote() read inside a transaction, before each of its swaps, equals that swap's
+    /// charge: the quote sees the transaction's transient running state. Two transactions of
+    /// mixed directions (one in every mode without --isolate), relative buffer on, settlement in
+    /// token0 so the charge is the W increase exactly; every charge also equals the reference.
+    function test_QuoteWithinATransactionEqualsTheCharge() public {
+        dm = new DeltaManager();
+        ParticipationAwareHook.Params memory p = _params(1e18, 0, LAMBDA_BPS, GAMMA_BPS);
+        p.epsilonRelPpb = FINAL_EPS_PPB;
+        raw = new ParticipationAwareHook(IPoolManager(address(dm)), IReferenceOracle(address(oracle)), VAULT, p);
+        rawKey = PoolKey(Currency.wrap(address(0xA0)), Currency.wrap(address(0xB0)), 3000, 60, IHooks(address(raw)));
+        rawId = PoolId.unwrap(rawKey.toId());
+        oracle.setPrice(rawId, 1.2e18);
+        rawPx = 1.2e18;
+        _refInit();
+        int128[3][2] memory x0 = [[int128(-10e18), 3e18, -2e18], [int128(-1e18), 0, 4e18]];
+        int128[3][2] memory x1 = [[int128(12e18), -3e18, 4e18], [int128(2e18), 1e18, -2e18]];
+        int128[] memory charges = new int128[](6);
+        uint256 charged;
+        for (uint256 t; t < 2; ++t) {
+            int128[] memory d0 = new int128[](3);
+            int128[] memory d1 = new int128[](3);
+            for (uint256 i; i < 3; ++i) {
+                (d0[i], d1[i]) = (x0[t][i], x1[t][i]);
+                _refPush(d0[i], d1[i], true, rawPx);
+            }
+            _refEndTx();
+            (int128[] memory r, uint256[] memory q) = dm.quoteAndSwapMany(raw, rawKey, d0, d1, true);
+            for (uint256 i; i < 3; ++i) {
+                assertEq(q[i], uint256(int256(r[i])), "quote inside the transaction = charge");
+                charges[3 * t + i] = r[i];
+                if (r[i] > 0) ++charged;
+            }
+        }
+        assertGe(charged, 3, "the sequence must charge several swaps");
+        RefOut memory e = _refRun(raw);
+        for (uint256 i; i < 6; ++i) assertEq(uint256(int256(charges[i])), e.w[i], "charge = reference");
+        assertEq(raw.scopeSurplus(rawKey.toId()), e.surplus[5], "block surplus = reference");
+    }
+
     function test_OverflowCumulativeDeltaSaturatesForRestOfBlock() public {
         _rawSetUp();
         _refInit();
@@ -336,7 +385,8 @@ contract BlockScopeBoundaryTest is BlockScopeBoundaryBase {
         assertGt(r1, 0, "first transaction charged");
         // tx 2: folds tx 1 (closed = 2^128 - 2, fits) and adds a small bracket
         dm.swap(raw, rawKey, 1e18, 0, true);
-        assertEq(raw.getScope(rawKey.toId()).closedSurplus, type(uint128).max - 1, "tx 1 folded");
+        // P = tx 1's folded bracket (2^128 - 2) + tx 2's bracket (1e18 at the reference 2)
+        assertEq(raw.scopeSurplus(rawKey.toId()), uint256(type(uint128).max) - 1 + 1e18, "tx 1 folded");
         // tx 3: folding tx 2 pushes the closed surplus above 2^128 - 1
         assertEq(dm.swap(raw, rawKey, 1e18, 0, true), 0, "closed surplus above 2^128 - 1: charge 0");
         _assertSaturatedForRestOfBlock();

@@ -38,18 +38,6 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
         (oldPool,) = _pool(IHooks(address(old)), 1.2e18);
     }
 
-    /// @dev Core delta of the last swap on the pool. Under --isolate every swap is its own
-    /// transaction, so with per-transaction accounting (V1) the scope's current transaction
-    /// delta is exactly that swap's delta.
-    function _lastDelta(ParticipationAwareHook.Scope memory, ParticipationAwareHook.Scope memory afterSwap_, bool)
-        internal
-        pure
-        returns (int256 d0, int256 d1)
-    {
-        d0 = int256(afterSwap_.cumulativeDelta0);
-        d1 = int256(afterSwap_.cumulativeDelta1);
-    }
-
     // ---------------------------------------------------------------------------------
     // Reversal across transactions (V1): an adverse transaction's negative surplus is clipped
     // at zero, so it neither lowers the block surplus nor refunds anything; W = F(A) after
@@ -106,7 +94,6 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
         _swapRec(address(0), pool, _exactOut(true, 20e18), 1.2e18);
         oracle.setPrice(PoolId.unwrap(poolId), 1.5e18);
 
-        ParticipationAwareHook.Scope memory before = hook.getScope(poolId);
         uint256 snap = vm.snapshotState();
         uint256 v0 = _vault(currency0);
         _swapRec(address(0), pool, _exactOut(true, 20e18), 1.5e18);
@@ -118,8 +105,9 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
         RefOut memory e = _refRun(hook);
         assertEq(r, e.w[1], "charge = reference (locked reference 1.2)");
 
-        // quote() before the swap predicted exactly this charge.
-        (int256 d0, int256 d1) = _lastDelta(before, s, false);
+        // quote() before the swap predicted exactly this charge. The swap's core delta comes from
+        // its Swap event (the transaction's own state is transient), read before the revert.
+        (int256 d0, int256 d1) = _lastRef();
         vm.revertToState(snap);
         assertEq(hook.quote(pool, d0, d1), r, "quote = charge of the next swap, mid-scope");
 
@@ -133,7 +121,7 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
         assertEq(s.referencePriceWad, 1.5e18, "new reference locked in the next block");
         e = _refRun(hook);
         assertEq(r, e.w[1], "charge = reference (new block, reference 1.5)");
-        (d0, d1) = _lastDelta(s, s, true);
+        (d0, d1) = _lastRef();
         vm.revertToState(snap);
         assertEq(hook.quote(pool, d0, d1), r, "quote = charge of the opening swap");
     }
@@ -156,10 +144,12 @@ contract BlockScopedHookScenariosTest is BlockScopedHookTestBase {
 
         oracle.setMode(PoolId.unwrap(poolId), MockOracle.Mode.Normal);
         oracle.setPrice(PoolId.unwrap(poolId), 1.2e18);
-        BalanceDelta d = _swapAs(_actor(2), pool, _exactOut(true, 40e18));
+        _refInit();
+        _swapRec(_actor(2), pool, _exactOut(true, 40e18), 1.2e18);
+        (int256 core0, int256 core1) = _lastRef();
         ParticipationAwareHook.Scope memory s = hook.getScope(poolId);
         assertEq(s.blockNumber, block.number, "retry opened the scope");
-        assertEq(int256(s.cumulativeDelta1), int256(d.amount1()), "scope holds only the second swap");
+        assertEq(s.closedSurplus, _txBracket(s, core0, core1), "scope holds only the second swap");
         uint256 charge = _vault(currency0) - v0;
         assertGt(charge, 0);
         assertEq(charge, _F(hook, s, _scopeSurplus(s)), "charged as an unsplit swap");

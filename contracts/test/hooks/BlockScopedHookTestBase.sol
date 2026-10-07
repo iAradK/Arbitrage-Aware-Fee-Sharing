@@ -327,6 +327,26 @@ abstract contract BlockScopedHookTestBase is Deployers {
         return uint256(s.closedSurplus) + (v > 0 ? uint256(v) : 0);
     }
 
+    /// @dev The bracket of one transaction with net core delta (d0, d1) and gross volume |d1| (a
+    /// single swap) under the scope's locked reference and eps. Since the current transaction's
+    /// state is transient, getScope from a later transaction (every call under --isolate) shows
+    /// it only folded into closedSurplus = P; tests compare P with this instead.
+    function _txBracket(ParticipationAwareHook.Scope memory s, int256 d0, int256 d1) internal pure returns (uint256) {
+        ParticipationAwareHook.Scope memory t;
+        t.referencePriceWad = s.referencePriceWad;
+        t.epsilonRelPpb = s.epsilonRelPpb;
+        t.cumulativeDelta0 = int128(d0);
+        t.cumulativeDelta1 = int128(d1);
+        t.txGross1 = uint128(d1 >= 0 ? uint256(d1) : uint256(-d1));
+        return _scopeSurplus(t);
+    }
+
+    /// @dev Core delta of the last swap recorded by _swapRec (its PoolManager Swap event).
+    function _lastRef() internal view returns (int256 d0, int256 d1) {
+        RefSwap storage t = refTrace[refTrace.length - 1];
+        (d0, d1) = (t.d0, t.d1);
+    }
+
     function _scopeSurplusNetOnly(ParticipationAwareHook.Scope memory s) internal pure returns (uint256) {
         int256 v = int256(s.cumulativeDelta0) + (int256(s.cumulativeDelta1) * int256(uint256(s.referencePriceWad))) / 1e18;
         return v > 0 ? uint256(v) : 0;

@@ -21,7 +21,7 @@ OUT.mkdir(parents=True, exist_ok=True)
 plotstyle.apply()
 plt.rcParams.update({"font.size": 8, "axes.titlesize": 8, "axes.labelsize": 8, "legend.fontsize": 7})
 
-# USDC/USDT is excluded (its fee tier is 0.001%, not the 0.01% of the model; results/DECISIONS.md W8)
+# USDC/USDT is excluded (its fee tier is 0.001%, not the 0.01% of the model; NOTES/DECISIONS.md W8)
 POOLS = ["eth_usdc_005", "eth_wbtc_030", "eth_wsteth_001"]
 SHORT = {"eth_usdc_005": "ETH/USDC", "usdc_usdt_0001": "USDC/USDT", "eth_wbtc_030": "ETH/WBTC", "eth_wsteth_001": "ETH/wstETH"}
 VARIANT = {"eth_usdc_005": "raw", "usdc_usdt_0001": "raw", "eth_wbtc_030": "corr24h", "eth_wsteth_001": "corr24h"}

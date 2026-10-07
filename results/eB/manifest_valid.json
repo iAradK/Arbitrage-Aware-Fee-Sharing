@@ -1,0 +1,205 @@
+{
+ "experiment": "eB",
+ "split": "valid",
+ "git_commit": "3555e77ae087033b86d407c3467ebe9ec43d90b0",
+ "uncommitted": [
+  " M data/data/binance/BTCUSDT_1m.csv.gz",
+  " M data/data/binance/ETHBTC_1m.csv.gz",
+  " M data/data/binance/ETHUSDC_1m.csv.gz",
+  " M data/data/binance/ETHUSDT_1m.csv.gz",
+  " M data/data/binance/USDCUSDT_1m.csv.gz"
+ ],
+ "note": "data/data/binance/*_1m.csv.gz are the main checkout's current klines (uncommitted there); their hashes are listed",
+ "inputs": {
+  "cache/aligned/eth_usdc_005.parquet": "b2a16fbdedc69e3d7ea0a4f8762331945b693b08f80c919a2508b4f07884b716",
+  "cache/aligned/eth_wbtc_030.parquet": "cb1a12f2a016b88ba5ea2894c68bab244bf196986cfa39d8007e5073304b0ddf",
+  "cache/block_gas.parquet": "30926b3d87a67f87744a9e5df62838c75c94a43eea76257511c474ff13198aca",
+  "config/gas_block_scope.json": "b83c39000710946921d3496fb24aa8fb8a6b0631efc89ae613da7a0648a79a96",
+  "results/eA/eA_fu2_block_scope.csv": "5ed3e74644c07d741f7632d6fe61ab9a281c3a772a428606dae885b004a79bc4",
+  "results/e1/depth_eth_usdc_005.parquet": "e16de0678144bf8695bab51c0f13310191feebf37ed68a0c92ec762b8937b3ef",
+  "results/e1/depth_eth_wbtc_030.parquet": "4a115c34b8110ca5c55bd10d1fdbda077f53f041d827347264cdbd9428992cc2",
+  "data/data/binance/BTCUSDT_1m.csv.gz": "dd056ba943ea40c7368ae404485c209a8874de013b3ed68d874f73b96d5214cc",
+  "data/data/binance/ETHBTC_1m.csv.gz": "a966a9095fc781428f950f92a64ce69c5ec6c15d615f3d95206757b35f646e91",
+  "data/data/binance/ETHUSDC_1m.csv.gz": "b7687d6fb4936f774b459fb51fd7fffceb68132ab8d49e041adeb1fada028ee4",
+  "data/data/binance/ETHUSDT_1m.csv.gz": "387b416d687a19c29515c328db905696a9b3824979083c7f8e3bd6a619403b17",
+  "data/data/binance/USDCUSDT_1m.csv.gz": "bc51e3d02777b4cf757b5e97013b7615f57cf4e4a2b4947fabc6cd7cf307e69c",
+  "results/e2/e2_summary_valid_lag0_med.parquet": "9336b7efe28e81110d1bbee06ec94765a1cce5486712c473fbb3cffcdd8aae8d",
+  "results/e2/e2_summary_valid_lag1_k15_med.parquet": "87aef6e6fe675fa44069d2730eb9383f02b3f9c356e3ef42b7f84c238160f689",
+  "experiments/eB_cross_block_split.py": "9f0e32e4c3fa4b6878065fd29115585534d6251c85c217f29833ed1a2f7f5ced"
+ },
+ "linked_from_main_checkout": [
+  "cache",
+  "results/e1",
+  "results/e2",
+  "data/data/lido"
+ ],
+ "parameters": {
+  "N": [
+   1,
+   2,
+   5,
+   75
+  ],
+  "rules": {
+   "ideal": {
+    "mech": "retained",
+    "k": 1,
+    "d": 0
+   },
+   "buffered": {
+    "mech": "buffered_1eps",
+    "k": 15,
+    "d": 1
+   }
+  },
+  "pool_variants": [
+   [
+    "eth_usdc_005",
+    "raw"
+   ],
+   [
+    "eth_wbtc_030",
+    "raw"
+   ],
+   [
+    "eth_wbtc_030",
+    "corr24h"
+   ]
+  ],
+  "lambda": 0.75,
+  "gamma": 0.02,
+  "R": "median regime",
+  "grid_points": 200,
+  "kappa_gas_units": 180214,
+  "tau_hat_wei": 50000000.0,
+  "gas": {
+   "first": 180214,
+   "extra": 155595,
+   "extra_charged": 169213
+  },
+  "gas_config": "config\\gas_block_scope.json",
+  "e2_config_sha256": "bb532f476f1366c77949da4b08a536d0aad265fb54348ca3a5b04b31b599c534"
+ },
+ "checks": [
+  {
+   "pool": "eth_usdc_005",
+   "variant": "raw",
+   "rule": "ideal",
+   "mech": "retained",
+   "k": 1,
+   "d": 0,
+   "R_usd": 1.3407785537220287,
+   "n_action_steps": 87840,
+   "n_executed_e2": 8569,
+   "n_dropped_horizon": 2,
+   "n_opportunities": 8567,
+   "e2_protection_recomputed": 37048.38447895841,
+   "e2_n_executed_recomputed": 8569,
+   "stored_tag": "valid_lag0_med",
+   "e2_protection_stored": 37048.38447895841,
+   "e2_n_executed_stored": 8569,
+   "exact": true
+  },
+  {
+   "pool": "eth_usdc_005",
+   "variant": "raw",
+   "rule": "buffered",
+   "mech": "buffered_1eps",
+   "k": 15,
+   "d": 1,
+   "R_usd": 1.3407785537220287,
+   "n_action_steps": 5856,
+   "n_executed_e2": 2606,
+   "n_dropped_horizon": 1,
+   "n_opportunities": 2605,
+   "e2_protection_recomputed": 24598.89629259227,
+   "e2_n_executed_recomputed": 2606,
+   "stored_tag": "valid_lag1_k15_med",
+   "e2_protection_stored": 24598.89629259227,
+   "e2_n_executed_stored": 2606,
+   "exact": true
+  },
+  {
+   "pool": "eth_wbtc_030",
+   "variant": "raw",
+   "rule": "ideal",
+   "mech": "retained",
+   "k": 1,
+   "d": 0,
+   "R_usd": 4.648058562149251,
+   "n_action_steps": 87840,
+   "n_executed_e2": 892,
+   "n_dropped_horizon": 0,
+   "n_opportunities": 892,
+   "e2_protection_recomputed": 12764.658732841724,
+   "e2_n_executed_recomputed": 892,
+   "stored_tag": "valid_lag0_med",
+   "e2_protection_stored": 12764.658732841724,
+   "e2_n_executed_stored": 892,
+   "exact": true
+  },
+  {
+   "pool": "eth_wbtc_030",
+   "variant": "raw",
+   "rule": "buffered",
+   "mech": "buffered_1eps",
+   "k": 15,
+   "d": 1,
+   "R_usd": 4.648058562149251,
+   "n_action_steps": 5856,
+   "n_executed_e2": 515,
+   "n_dropped_horizon": 0,
+   "n_opportunities": 515,
+   "e2_protection_recomputed": 10431.58189172601,
+   "e2_n_executed_recomputed": 515,
+   "stored_tag": "valid_lag1_k15_med",
+   "e2_protection_stored": 10431.58189172601,
+   "e2_n_executed_stored": 515,
+   "exact": true
+  },
+  {
+   "pool": "eth_wbtc_030",
+   "variant": "corr24h",
+   "rule": "ideal",
+   "mech": "retained",
+   "k": 1,
+   "d": 0,
+   "R_usd": 4.917358635714901,
+   "n_action_steps": 87840,
+   "n_executed_e2": 750,
+   "n_dropped_horizon": 0,
+   "n_opportunities": 750,
+   "e2_protection_recomputed": 13282.645619340712,
+   "e2_n_executed_recomputed": 750,
+   "stored_tag": "valid_lag0_med",
+   "e2_protection_stored": 13282.645619340712,
+   "e2_n_executed_stored": 750,
+   "exact": true
+  },
+  {
+   "pool": "eth_wbtc_030",
+   "variant": "corr24h",
+   "rule": "buffered",
+   "mech": "buffered_1eps",
+   "k": 15,
+   "d": 1,
+   "R_usd": 4.917358635714901,
+   "n_action_steps": 5856,
+   "n_executed_e2": 442,
+   "n_dropped_horizon": 0,
+   "n_opportunities": 442,
+   "e2_protection_recomputed": 8480.381061645265,
+   "e2_n_executed_recomputed": 442,
+   "stored_tag": "valid_lag1_k15_med",
+   "e2_protection_stored": 8480.381061645265,
+   "e2_n_executed_stored": 442,
+   "exact": true
+  }
+ ],
+ "outputs": {
+  "eB_bracket_comparison_valid.csv": "fd283432915b0f5f37ff03c78cac39cb30793f344b3e0a4941e14106c6422e37",
+  "eB_checks_valid.csv": "ef1e67d3a273d0c1fece9eeea2201ee1122e6c914e56e68b13f78706841652aa",
+  "eB_opportunities_valid.csv.gz": "90bc47386df251ec8c34f9c8bd885fb1fe6747fecc324af3f906174aa5383385",
+  "eB_summary_valid.csv": "fee245e34882ec26666fdf827c2521a5db0bcba03d7a9a88a40de93422fcbf0b"
+ }
+}

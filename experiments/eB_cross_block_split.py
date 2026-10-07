@@ -258,6 +258,7 @@ def summarize(df):
         m = c1 > 0
         split = x["l_star"] > 1
         either = x["executed_1"] | x["executed_N"]
+        both = x["executed_1"] & x["executed_N"]
         gain = x["payoff_N"] - x["payoff_1"]
         prof = either & (gain > 1e-9)
         bf = x["baseline_feasible"]
@@ -279,6 +280,12 @@ def summarize(df):
             "twe_1_bp": 1e4 * x["twe_1"].mean(), "twe_N_bp": 1e4 * x["twe_N"].mean(),
             "extra_twe_bp": 1e4 * (x["twe_N"] - x["twe_1"]).mean(),
             "extra_twe_rel": x["twe_N"].sum() / x["twe_1"].sum() - 1 if x["twe_1"].sum() > 0 else np.nan,
+            # like for like: opportunities executed both unsplit and split (the mean above also contains opportunities
+            # that only the split executes, whose pool the unsplit run leaves uncorrected for the whole horizon)
+            "n_both_executed": int(both.sum()),
+            "extra_twe_bp_both_executed": 1e4 * (x["twe_N"] - x["twe_1"])[both].mean() if both.any() else np.nan,
+            "extra_twe_bp_median_both_executed": 1e4 * q((x["twe_N"] - x["twe_1"])[both], 0.5),
+            "extra_twe_rel_both_executed": (x["twe_N"][both].sum() / x["twe_1"][both].sum() - 1) if both.any() else np.nan,
             "n_baseline_feasible": int(bf.sum()), "violations": int((viol_noexec | viol_payoff).sum()),
             "violation_rate": float((viol_noexec | viol_payoff).sum() / bf.sum()) if bf.any() else np.nan,
             "violations_not_executed": int(viol_noexec.sum()), "violations_payoff_below_R": int(viol_payoff.sum()),

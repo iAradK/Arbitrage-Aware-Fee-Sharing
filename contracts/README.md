@@ -188,6 +188,11 @@ forge test --match-contract SurplusSharingAccountingTest -vv
 The test suite covers the corrected operation order, cap and proportional
 branches, boundary values, fuzzed upper bounds, and Python-generated vectors.
 
+Test outputs are written only when their environment variable is set
+(`GAS_OUTPUT`, `CUMULATIVE_GAS_OUTPUT`, `HOOK_LIFECYCLE_GAS_OUTPUT`, `E7_COUNTS`,
+`E7_GAS_CSV`); a plain `forge test` checks the same assertions and writes none of
+them. `experiments/e7_solidity_conformance.py --forge` sets the E7 ones.
+
 To write the arithmetic-only gas CSV:
 
 ```bash
@@ -343,11 +348,11 @@ records an identically-sized, identically-liquidity-seeded baseline swap
 with hooks disabled (`address(0)`) for comparison.
 
 ```bash
+HOOK_LIFECYCLE_GAS_OUTPUT=results/hook_lifecycle_gas.csv \
 forge test --match-test test_GasBenchmarkFullLifecycle -vv
 ```
 
-This regenerates `results/hook_lifecycle_gas.csv` (path overridable via
-`HOOK_LIFECYCLE_GAS_OUTPUT`) over a fixed, deterministic scenario grid: `{1,
+This writes the CSV named by `HOOK_LIFECYCLE_GAS_OUTPUT` over a fixed, deterministic scenario grid: `{1,
 2, 4, 8, 16}` fragments (a fixed total swap notional split into that many
 sequential callbacks, mirroring `test_GasBenchmarkCumulative`'s convention)
 x `{single-tick, multi-tick}` swap sizes x `{valid, stale, zero-price,

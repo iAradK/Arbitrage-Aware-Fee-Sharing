@@ -23,6 +23,7 @@ contract E7GasProfileTest is Test {
     function _row(string memory f, string memory kind, uint256 n, string memory phase, uint256 idx, uint256 gas_, uint256 charge)
         internal
     {
+        if (bytes(f).length == 0) return;
         vm.writeLine(
             f,
             string.concat(kind, ",", vm.toString(n), ",", phase, ",", vm.toString(idx), ",", vm.toString(gas_), ",", vm.toString(charge))
@@ -30,8 +31,9 @@ contract E7GasProfileTest is Test {
     }
 
     function test_GasProfile() public {
-        string memory f = vm.envOr("E7_GAS_CSV", string("../results/e7/gas_cumulative.csv"));
-        vm.writeFile(f, "kind,n,phase,index,gas,marginal_charge_wad\n");
+        // Written only when E7_GAS_CSV is set (experiments/e7_solidity_conformance.py sets it).
+        string memory f = vm.envOr("E7_GAS_CSV", string(""));
+        if (bytes(f).length != 0) vm.writeFile(f, "kind,n,phase,index,gas,marginal_charge_wad\n");
         uint256[5] memory ns = [uint256(1), 2, 4, 8, 16];
         for (uint256 a; a < ns.length; ++a) {
             uint256 n = ns[a];

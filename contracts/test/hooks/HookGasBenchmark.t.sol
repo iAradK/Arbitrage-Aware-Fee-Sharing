@@ -36,8 +36,10 @@ contract HookGasBenchmarkTest is HookTestBase {
     }
 
     function test_GasBenchmarkFullLifecycle() public {
-        string memory output = vm.envOr("HOOK_LIFECYCLE_GAS_OUTPUT", string("results/hook_lifecycle_gas.csv"));
-        vm.writeFile(
+        // Written only when HOOK_LIFECYCLE_GAS_OUTPUT is set (experiments/e7_solidity_conformance.py
+        // sets it), so a plain test run never overwrites a result file.
+        string memory output = vm.envOr("HOOK_LIFECYCLE_GAS_OUTPUT", string(""));
+        if (bytes(output).length != 0) vm.writeFile(
             output,
             "scenario_id,fragments,fragment_index,oracle_mode,swap_amount_wad,zero_for_one,ticks_crossed,tick_crossing_class,cap_binds,gas_used_with_hook,gas_used_without_hook,marginal_charge_wad,cumulative_target_wad,reverted\n"
         );
@@ -183,6 +185,7 @@ contract HookGasBenchmarkTest is HookTestBase {
         uint256 cumulativeTargetWad,
         bool reverted
     ) private {
+        if (bytes(output).length == 0) return;
         vm.writeLine(
             output,
             string.concat(

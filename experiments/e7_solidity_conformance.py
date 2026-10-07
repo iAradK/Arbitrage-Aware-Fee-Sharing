@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -100,9 +101,12 @@ def wsl(cmd: str, cwd: Path, timeout=1800) -> str:
 
 def run_forge(cfg: dict, out: Path) -> None:
     proj = ROOT / cfg["forge_project"]
-    log = wsl("forge test --offline --match-contract 'E7ConformanceTest|E7GasProfileTest' -vv 2>&1 | grep -E 'PASS|FAIL|Suite|Error|mismatch' ", proj)
+    # The tests write their outputs only when these variables are set (paths relative to the forge project).
+    rel = Path(os.path.relpath(out, proj)).as_posix()
+    log = wsl(f"E7_COUNTS='{rel}/conformance_counts.json' E7_GAS_CSV='{rel}/gas_cumulative.csv' "
+              "forge test --offline --match-contract 'E7ConformanceTest|E7GasProfileTest' -vv 2>&1 | grep -E 'PASS|FAIL|Suite|Error|mismatch' ", proj)
     print(log)
-    log2 = wsl(f"HOOK_LIFECYCLE_GAS_OUTPUT='../results/e7/hook_lifecycle_gas.csv' forge test --offline --match-contract HookGasBenchmarkTest 2>&1 | grep -E 'PASS|FAIL|Suite'", proj)
+    log2 = wsl(f"HOOK_LIFECYCLE_GAS_OUTPUT='{rel}/hook_lifecycle_gas.csv' forge test --offline --match-contract HookGasBenchmarkTest 2>&1 | grep -E 'PASS|FAIL|Suite'", proj)
     print(log2)
     # v2 (fix 5): every fragment count in its own transaction, so each run's first swap is cold
     log3 = wsl("forge test --offline --match-contract HookGasIsolatedTest -vv 2>&1 | grep -E 'ISOGAS|PASS|FAIL|Suite'", proj)

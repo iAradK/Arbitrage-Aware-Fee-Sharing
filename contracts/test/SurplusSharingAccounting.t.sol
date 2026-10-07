@@ -152,13 +152,12 @@ contract SurplusSharingAccountingTest is Test {
             "VECTORS",
             string("results/test_vectors.json")
         );
-        string memory output = vm.envOr(
-            "GAS_OUTPUT",
-            string("results/solidity_gas.csv")
-        );
+        // Written only when GAS_OUTPUT is set, so a plain test run never overwrites a result file.
+        string memory output = vm.envOr("GAS_OUTPUT", string(""));
+        bool write = bytes(output).length != 0;
         string memory json = vm.readFile(path);
         uint256 count = vm.parseJsonUint(json, ".count");
-        vm.writeFile(
+        if (write) vm.writeFile(
             output,
             "event_id,transfer_solidity_wad,gas_used,cap_binds\n"
         );
@@ -193,7 +192,7 @@ contract SurplusSharingAccountingTest is Test {
             );
             uint256 gasUsed = gasBefore - gasleft();
 
-            vm.writeLine(
+            if (write) vm.writeLine(
                 output,
                 string.concat(
                     eventId,

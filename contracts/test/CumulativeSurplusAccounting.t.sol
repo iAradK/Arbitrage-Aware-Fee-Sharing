@@ -257,11 +257,10 @@ contract CumulativeSurplusAccountingTest is Test {
     }
 
     function test_GasBenchmarkCumulative() public {
-        string memory output = vm.envOr(
-            "CUMULATIVE_GAS_OUTPUT",
-            string("results/cumulative_solidity_gas.csv")
-        );
-        vm.writeFile(
+        // Written only when CUMULATIVE_GAS_OUTPUT is set, so a plain test run never overwrites a
+        // result file.
+        string memory output = vm.envOr("CUMULATIVE_GAS_OUTPUT", string(""));
+        if (bytes(output).length != 0) vm.writeFile(
             output,
             "fragments,fragment_index,phase,gas_used,marginal_charge_wad,cumulative_target_wad\n"
         );
@@ -346,6 +345,7 @@ contract CumulativeSurplusAccountingTest is Test {
         uint256 marginalCharge,
         uint256 cumulativeTarget
     ) internal {
+        if (bytes(output).length == 0) return;
         vm.writeLine(
             output,
             string.concat(

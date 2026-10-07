@@ -129,7 +129,10 @@ contract E7ConformanceTest is Test {
             ",\"computeTransfer_gas_mean\":", vm.toString(nG == 0 ? 0 : gSum / nG),
             "}"
         );
-        vm.writeFile(vm.envOr("E7_COUNTS", string("../results/e7/conformance_counts.json")), out);
+        // Written only when E7_COUNTS is set (experiments/e7_solidity_conformance.py sets it), so a
+        // plain test run never overwrites a result file.
+        string memory countsPath = vm.envOr("E7_COUNTS", string(""));
+        if (bytes(countsPath).length != 0) vm.writeFile(countsPath, out);
         nonNegative;
 
         assertEq(mismatches, 0, "atomic transfer mismatch");

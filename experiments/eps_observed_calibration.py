@@ -28,7 +28,8 @@ Checks: the k1 per-query series equals the stored Q4 eps series (results/eQ4, re
 executed corrections equals the stored Q4 cross-block opportunities' eps; the daily value is whole ppb and never
 uses an error stamped at or after its day's 00:00 UTC.
 
-  python experiments/eps_observed_calibration.py [--workers W]
+  python experiments/eps_observed_calibration.py [--workers W] [--variants eC|e2]
+(RESULTS_RUN=<name> writes to results/<name>/eps_observed instead of results/eps_observed.)
 """
 from __future__ import annotations
 
@@ -56,8 +57,14 @@ import eQ4_splitting as q4s  # noqa: E402
 from common import minutegrid as mg, reporting  # noqa: E402
 from common.pools import CACHE, POOLS, RESULTS  # noqa: E402
 
-OUT = RESULTS / "eps_observed"
-POOL_VARIANTS = eC.POOL_VARIANTS
+OUT = reporting.run_root() / "eps_observed"          # results/eps_observed, or results/<RESULTS_RUN>/eps_observed
+POOL_VARIANTS = eC.POOL_VARIANTS                      # --variants eC (default): ETH/USDC raw, ETH/WBTC corr24h and raw
+
+
+def e2_pool_variants() -> list:
+    """--variants e2: every pool variant of the E2 replays (experiments/configs/e2.yml), same method."""
+    cfg = reporting.load_config(ROOT / "experiments" / "configs" / "e2.yml")
+    return [(k, v) for k in cfg["pools"] for v in cfg["variants"][k]]
 
 
 def observed(key: str, var: str, split: str) -> pd.DataFrame:
@@ -220,7 +227,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", choices=["valid", "test"], default="valid")
     ap.add_argument("--workers", type=int, default=3)
+    ap.add_argument("--variants", choices=["eC", "e2"], default="eC", help="eC: the three Experiment C pool variants; "
+                    "e2: every E2 pool variant (adds ETH/WBTC corr6h, corr7d and the four ETH/wstETH variants)")
     a = ap.parse_args()
+    pvs = POOL_VARIANTS if a.variants == "eC" else e2_pool_variants()
     if a.split != "valid":
         raise SystemExit("validation-only: the test months are refused")
     t0 = time.time()
@@ -228,7 +238,7 @@ def main():
     cfg2 = reporting.load_config(ROOT / "experiments" / "configs" / "e2.yml")
     lam, gam = cfg2["headline"]["lambda"], cfg2["headline"]["gamma"]
     with ProcessPoolExecutor(a.workers) as ex:
-        res = list(ex.map(one, [(k, v, cfg2, lam, gam) for k, v in POOL_VARIANTS]))
+        res = list(ex.map(one, [(k, v, cfg2, lam, gam) for k, v in pvs]))
     summ = pd.DataFrame([r for x in res for r in x["rows"]])
     days = pd.concat([x["days"] for x in res], ignore_index=True)
     counts = pd.DataFrame([x["counts"] for x in res])
@@ -240,8 +250,9 @@ def main():
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
     dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, capture_output=True,
                            text=True).stdout.splitlines()
-    inputs = ([CACHE / "aligned" / f"{k}.parquet" for k in ("eth_usdc_005", "eth_wbtc_030")] + [CACHE / "block_gas.parquet"]
-              + [RESULTS / "e1" / f"depth_{k}.parquet" for k in ("eth_usdc_005", "eth_wbtc_030")]
+    keys = sorted({k for k, _ in pvs})
+    inputs = ([CACHE / "aligned" / f"{k}.parquet" for k in keys] + [CACHE / "block_gas.parquet"]
+              + [RESULTS / "e1" / f"depth_{k}.parquet" for k in keys]
               + sorted((ROOT / "data" / "data" / "binance").glob("*_1m.csv.gz")) + sorted((ROOT / "data" / "data" / "gas").glob("bq-results-*.csv"))
               + [ROOT / "experiments" / "configs" / "e2.yml"] + sorted((RESULTS / "eQ4").glob("eQ4_*valid.csv.gz"))
               + [Path(p) for p in (__file__, q4.__file__, q4s.__file__, eC.__file__, e2.__file__)])
@@ -254,7 +265,7 @@ def main():
                          "update": "daily at 00:00 UTC, errors strictly before, rounded up to whole ppb",
                          "price_correcting": "sign(price - price_pre) = sign(pi_bench - price_pre) != 0",
                          "error": "|pi_hook / pi_bench - 1|", "seed": "last eps_window_days + 1 days of the train split",
-                         "pool_variants": POOL_VARIANTS, "e2_config_sha256": reporting.config_hash(cfg2)},
+                         "pool_variants": pvs, "e2_config_sha256": reporting.config_hash(cfg2)},
           "checks": json.loads(checks.to_json(orient="records")),
           "outputs": {p.name: sha(p) for p in sorted(OUT.glob("eps_observed_*_valid.csv"))}}
     (OUT / "manifest_valid.json").write_text(json.dumps(mf, indent=1, default=str))

@@ -1,0 +1,48 @@
+experiment: e2
+# Final rule for the paper reruns (2026-10-08). Everything not listed under "final" is e2.yml's frozen setting.
+# Run with RESULTS_RUN=final_valid so outputs go to results/final_valid/e2; validation months only until frozen.
+seed: 20260924
+pools: [eth_usdc_005, eth_wbtc_030, eth_wsteth_001]   # USDC/USDT excluded (DECISIONS W8, H2)
+variants:
+  eth_usdc_005: [raw]
+  usdc_usdt_0001: [raw]
+  eth_wbtc_030: [raw, corr24h, corr6h, corr7d]
+  eth_wsteth_001: [raw, corr24h, corr6h, corr7d]
+gas_units: 150000            # arbitrage tx gas (assumption; E5 sweeps it)
+# The block-scoped P-net hook's cold gas (config/gas_block_scope.json; contracts = cab9c14, measured on e63693e).
+# Every correction is the first swap of its block: uncharged corrections (and the baseline, and eps_S's candidates) pay
+# hook_overhead_gas; charged corrections pay hook_overhead_gas_charged (settlement included). The hook's g_hat is the
+# charged figure (DECISIONS I3). hook_overhead_gas_charged_empty_vault is the settlement sensitivity (E8).
+hook_overhead_gas: 38520
+hook_overhead_gas_charged: 52161
+hook_overhead_gas_charged_empty_vault: 69261
+hook_lag_min: 0
+r_quantiles: [0.25, 0.5, 0.75]
+eps_quantile: 0.95
+eps_calibration_split: valid
+grid_points: 200
+lambdas: [0.25, 0.5, 0.75, 0.95]
+gammas: [0.005, 0.02, 0.05, 0.10]
+static_fee_rates: [0.0005, 0.003]
+headline: {lambda: 0.75, gamma: 0.02}
+eps_mode: rolling            # eps_S (USD) is still tracked and reported; the final buffered rules do not use it
+eps_window_days: 7
+cadences_min: [1, 5, 15]
+nohook_baseline: true
+hook_gas_rule:
+  gas_quantile: 0.90
+  material_etw_ratio: 1.01
+  ci: 0.95
+  bootstrap_B: 2000
+final:
+  # Buffered rules (buffered_1eps, buffered_2eps): block scope with per-transaction clipping; each correction is one
+  # transaction, so its bracket is [S_hat - dmult * eps_rel * |net token1 change|]^+ (the contract's
+  # ceil(eps_rel * pi_hat * |X_1|) with token0 = ETH, in the replay's numeraire = the pool's token1), delta = 0, and
+  # F = min(lambda * bracket, (1 - gamma) * [bracket - K_hat]^+). retained = the same with eps = 0.
+  buffer: prop_net
+  # eps_rel: the daily observed-swap calibration per pool variant (experiments/eps_observed_calibration.py --variants
+  # e2): at 00:00 UTC the rolling 7-day p95 of |P_hat/P - 1| over observed price-correcting swaps, ceil to whole ppb.
+  eps_source: eps_observed/eps_observed_daily_valid.csv
+  settlement: charged        # charged corrections pay hook_overhead_gas_charged ("empty_vault": the sensitivity)
+  k_hat: true_cost           # replays keep K_hat = K (gas at the block's actual gas price + R); tau_hat enters only
+                             # where K_hat is estimated (E4, B.10)

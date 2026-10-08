@@ -64,7 +64,7 @@ def make_configs(cfg: dict) -> pd.DataFrame:
 
 
 def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, eps_usd: float, d: int,
-             k: int = 1, eps_seed: pd.DataFrame | None = None) -> dict:
+             k: int = 1, eps_seed: pd.DataFrame | None = None, eps_rel: np.ndarray | None = None) -> dict:
     """Vectorised over configurations; sequential over minutes. The searcher acts every k minutes. If eps_seed is given
     (columns t, err_usd: baseline candidates of the preceding split), eps_S is rolling: at each step the P95 of |S_hat - S|
     over baseline candidates (seed plus this run's config 0) in the trailing eps_window_days, strictly earlier.
@@ -74,7 +74,9 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
     Optional columns of C (E8; absent in E2, which then runs exactly as frozen):
       gas_ch  gas paid when the configuration charges (r > 0), e.g. hook overhead with settlement; default `gas`
       ghat    gas amount in the hook's K_hat; default `gas`
-      buf     "abs" (P95 of |S_hat - S|, E2) or "signed" (one-sided: P95 of S_hat - S, floored at 0); default "abs"
+      buf     "abs" (P95 of |S_hat - S|, E2) or "signed" (one-sided: P95 of S_hat - S, floored at 0); default "abs";
+              "prop" (final rule): no delta; the hook's surplus is the buffered bracket
+              [S_hat - dmult * eps_rel[t] * |net token1 change|]^+ (eps_rel: one value per minute, the daily calibration)
       beta    DYNFEE: fee = pool fee + beta * |log(P_pool / P_hat)|, set from the pre-swap state; LPs keep the excess fee
       tax_t   MEVTAX: competing searchers bid their margin, so the tax takes t/(1+t) of S - C - R"""
     T, nC, G = len(g), len(C), cfg["grid_points"]
@@ -87,6 +89,8 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
     gas_ch = C["gas_ch"].to_numpy(dtype=float) if "gas_ch" in C else gas_u
     gas_hat = C["ghat"].to_numpy(dtype=float) if "ghat" in C else gas_u
     signed = (C["buf"].to_numpy() == "signed") if "buf" in C else np.zeros(nC, dtype=bool)
+    prop = (C["buf"].to_numpy() == "prop") if "buf" in C else np.zeros(nC, dtype=bool)
+    assert not prop.any() or (eps_rel is not None and len(eps_rel) == len(g)), "buf = prop needs eps_rel per minute"
     beta = C["beta"].to_numpy(dtype=float) if "beta" in C else np.zeros(nC)
     tax_t = C["tax_t"].to_numpy(dtype=float) if "tax_t" in C else np.zeros(nC)
     has_dyn = bool((kind == DYNFEE).any())
@@ -189,7 +193,13 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
         eps_c = np.where(signed[ix], eps_now_s, eps_now) if signed.any() else eps_now
         delta = (eps_c * dm[ix] / usd)[:, None]
         Kh = (mg.gas_cost_num(gas_a[i], en_a[i], gas_hat) + R) if ext_gas else K      # the hook's K_hat
-        rule = np.minimum(lam[ix, None] * Sh, (1 - gam[ix, None]) * np.maximum(Sh - Kh[ix, None] - delta, 0.0))
+        if prop.any():                                   # final rule: the buffer is inside the bracket, delta = 0
+            pr = prop[ix, None]
+            Sh_r = np.where(pr, np.maximum(Sh - dm[ix, None] * eps_rel[i] * np.abs(tr["d1"]), 0.0), Sh)
+            delta = np.where(pr, 0.0, delta)
+        else:
+            Sh_r = Sh
+        rule = np.minimum(lam[ix, None] * Sh_r, (1 - gam[ix, None]) * np.maximum(Sh_r - Kh[ix, None] - delta, 0.0))
         k_ = kind[ix, None]
         r = np.where(k_ == STATIC, phi[ix, None] * tr["notional"], np.where(k_ == UNCON, lam[ix, None] * Sh, np.where(k_ == RULE, rule, 0.0)))
         if has_dyn:                                      # LPs keep the fee above the pool fee; S is reported net of the pool fee only
@@ -256,6 +266,34 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
                                     "C_hook_usd": nh_Ch, "f150": nh_f150, "f180": nh_f180}) if jn >= 0 else None}
 
 
+def final_configs(cfg: dict, settlement: str | None = None) -> pd.DataFrame:
+    """make_configs for the final rule (cfg["final"], experiments/configs/e2_final.yml): the buffered rules use the
+    proportional net buffer (buf = "prop"); every hooked configuration pays hook_overhead_gas when uncharged and
+    gas_units + the charged figure when it charges, and the hook's g_hat is that charged figure (DECISIONS I3)."""
+    C = make_configs(cfg)
+    st = settlement or cfg["final"]["settlement"]
+    charged = cfg["hook_overhead_gas_charged"] if st == "charged" else cfg["hook_overhead_gas_charged_empty_vault"]
+    nohook = (C["mech"] == "baseline_nohook").to_numpy()
+    g_ch = float(cfg["gas_units"] + charged)
+    C["gas_ch"] = np.where(nohook, C["gas"], g_ch)
+    C["ghat"] = np.where(nohook, C["gas"], g_ch)
+    C["buf"] = np.where(C["mech"].str.startswith("buffered").to_numpy(), "prop", "abs")
+    return C
+
+
+def final_eps_rel(cfg: dict, pool_key: str, variant: str, g: pd.DataFrame) -> np.ndarray:
+    """eps_rel in force at each minute of the grid: the daily whole-ppb observed-swap calibration of the pool variant."""
+    f = reporting.run_root() / cfg["final"]["eps_source"]
+    tab = pd.read_csv(f)
+    tab = tab[(tab["pool"] == pool_key) & (tab["variant"] == variant)]
+    assert len(tab), f"no daily eps for {pool_key} {variant} in {f}"
+    ppb = pd.Series(tab["eps_rel_ppb"].to_numpy(np.int64), index=pd.DatetimeIndex(pd.to_datetime(tab["day"])).tz_localize(None))
+    day = pd.DatetimeIndex(g["t"]).tz_convert(None).floor("D")
+    v = ppb.reindex(day).to_numpy(dtype=float)
+    assert np.isfinite(v).all(), f"days without a daily eps for {pool_key} {variant}"
+    return v / 1e9
+
+
 def eps_seed(pool_key: str, variant: str, R: float, d: int, k: int, split: str, cfg: dict) -> pd.DataFrame:
     """Baseline candidates (t, |S_hat - S| USD) of the last days of `split`, used to seed the rolling eps_S."""
     gv = mg.build_grid(pool_key, split, variant, lags=(0, d))
@@ -303,7 +341,15 @@ def main():
     reporting.guard_split("e2", a.split, a.confirm_frozen, cfg)
     d = a.lag if a.lag is not None else cfg["hook_lag_min"]
     gas_units = cfg["gas_units"] + cfg["hook_overhead_gas"]
-    C = make_configs(cfg)
+    final = "final" in cfg
+    if final and a.split != "valid":
+        raise SystemExit("the final-rule config runs on the validation months only until it is frozen")
+    if final:                                            # the config's gas must be the gas config's measured figures
+        import json
+        gj = json.loads((ROOT / "config" / "gas_block_scope.json").read_text())["hook_overhead_gas"]
+        assert (cfg["hook_overhead_gas"], cfg["hook_overhead_gas_charged"], cfg["hook_overhead_gas_charged_empty_vault"]) == (
+            gj["first_swap_of_block"], gj["charged_swap"], gj["charged_swap_empty_vault_sensitivity"]), "e2_final.yml gas != config/gas_block_scope.json"
+    C = final_configs(cfg) if final else make_configs(cfg)
     keys = a.pools.split(",") if a.pools else cfg["pools"]
     tables, eps_rows, dailies, nohook_steps = [], [], [], []
     k = a.cadence
@@ -316,9 +362,10 @@ def main():
                 regimes = {"median": regimes["median"]}
             eps = eps_table(key, variant, regimes, d, cfg, k) if cfg["eps_mode"] == "fixed" else {n_: np.nan for n_ in regimes}
             g = mg.build_grid(key, a.split, variant, lags=(0, d))
+            er = final_eps_rel(cfg, key, variant, g) if final else None
             for rname, R_usd in regimes.items():
                 seed = eps_seed(key, variant, R_usd, d, k, PRIOR[a.split], cfg) if cfg["eps_mode"] == "rolling" else None
-                r = simulate(g, pool, C, cfg, R_usd, eps[rname], d, k, seed)
+                r = simulate(g, pool, C, cfg, R_usd, eps[rname], d, k, seed, eps_rel=er)
                 if r["nohook"] is not None:
                     nhk = r["nohook"][r["nohook"]["act"]].drop(columns="act")
                     nhk.insert(0, "R_usd", R_usd)
@@ -337,6 +384,8 @@ def main():
                 t.insert(0, "pool", key)
                 eps_rep = eps[rname] if cfg["eps_mode"] == "fixed" else t["eps_S_used_median_usd"].iloc[0]
                 t["R_usd"], t["eps_S_usd"], t["hook_lag_min"], t["cadence_min"], t["eps_mode"] = R_usd, eps_rep, d, k, cfg["eps_mode"]
+                if final:
+                    t["eps_rel_median_bp"] = float(np.median(er)) * 1e4
                 tables.append(t)
                 eps_rows.append({"pool": key, "variant": variant, "regime": rname, "R_usd": R_usd, "eps_S_usd": eps_rep, "eps_mode": cfg["eps_mode"],
                                  "lag_min": d, "cadence_min": k})
@@ -355,8 +404,13 @@ def main():
     head = sel[cols].copy()
     reporting.write_table(head, out / "tables" / f"e2_headline_{tag}", {"execution_rate": "{:.3f}", "participation_violation_rate": "{:.3f}",
                           "cap_violation_rate": "{:.3f}", "etw_mean": "{:.2e}", "etw_p95": "{:.2e}", "protection_usd": "{:,.0f}", "searcher_net_usd": "{:,.0f}"})
-    reporting.write_manifest("e2", cfg, [CACHE / "aligned" / f"{kk}.parquet" for kk in keys], a.split,
-                             {"hook_lag_min": d, "cadence_min": k, "gas_units": gas_units, "eps_mode": cfg["eps_mode"]}, tag=tag)
+    ins = [CACHE / "aligned" / f"{kk}.parquet" for kk in keys]
+    extra = {"hook_lag_min": d, "cadence_min": k, "gas_units": gas_units, "eps_mode": cfg["eps_mode"]}
+    if final:
+        ins += [reporting.run_root() / cfg["final"]["eps_source"], ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
+        extra.update({"config": Path(a.config).name, "final": cfg["final"], "hook_gas_uncharged": cfg["hook_overhead_gas"],
+                      "hook_gas_charged": cfg["hook_overhead_gas_charged"], "results_run": reporting.RESULTS_RUN})
+    reporting.write_manifest("e2", cfg, ins, a.split, extra, tag=tag)
     with pd.option_context("display.width", 250, "display.max_columns", 30, "display.max_rows", 200):
         print(head[head["variant"].isin(["raw", "corr24h"])].round(4).to_string(index=False))
 

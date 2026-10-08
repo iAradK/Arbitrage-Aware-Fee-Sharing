@@ -1,27 +1,28 @@
 {
- "description": "Canonical gas figures of the final block-scoped ParticipationAwareHook (block scope V1 with per-transaction clipping, relative buffer, current transaction in transient storage). Overheads are gas with the hook minus the identical swap without a hook, each measured swap a cold transaction (forge test --isolate). An uncharged correction is priced at the first swap of a block whose block surplus changes (new_block_positive_surplus); when the surplus stays 0 the hook costs 35,901 instead. Additional transaction = intrinsic 21,000 + steady-state swap without a hook + hook overhead. Read by experiments/e2_blockgas.py and experiments/eB_cross_block_split.py (and through eB by eQ3, eQ4 and eQ5); GAS_BLOCK_SCOPE_CONFIG overrides the path, e.g. to reproduce a result made with an earlier version of this file.",
+ "description": "Canonical gas figures of the final block-scoped ParticipationAwareHook (block scope V1 with per-transaction clipping, relative buffer, current transaction in transient storage, buffer on each transaction's net token1 change (P-net), gasPriceToken0Wad = 1e18). Overheads are gas with the hook minus the identical swap without a hook, each measured swap a cold transaction (forge test --isolate). An uncharged correction is priced at the first swap of a block whose block surplus changes (new_block_positive_surplus); when the surplus stays 0 the hook costs 35,725 instead. Additional transaction = intrinsic 21,000 + steady-state swap without a hook + hook overhead. Read by experiments/e2_blockgas.py and experiments/eB_cross_block_split.py (and through eB by eQ3, eQ4 and eQ5); GAS_BLOCK_SCOPE_CONFIG overrides the path, e.g. to reproduce a result made with an earlier version of this file.",
  "hook": "contracts/src/hooks/ParticipationAwareHook.sol (block-scoped)",
  "source": {
-  "table": "results/gas/gas_cold.csv",
-  "table_sha256": "3d217916c58723faac194df095325c87e57979c034f8f50b2b15c9dfa02128ad",
+  "table": "results/final_valid/gas/gas_cold.csv",
+  "table_sha256": "4638ced9042e17e0b702e5fb7a7c4f15a621f25bbe86c730b5a64c8145dfd951",
   "table_tracked": false,
   "script": "experiments/gas_cold_table.py",
-  "measured_on_contracts_commit": "9cee5cfb2fb884be0268294d9fbbb5e7ef89d9e7",
-  "same_hook_as": "27fef0a (s2-gas-transient, identical figures)",
-  "explanation": "NOTES/2026-10-06_block_scoped_hook.md sections 9 and 10"
+  "measured_on_contracts_commit": "e63693e6a04ec1c0646d50d9f8e6dcefcfcd1e5c",
+  "same_contracts_as": "cab9c14 (claude/pnet-contract, merged at 5752782; identical contract tree)",
+  "explanation": "NOTES/2026-10-06_block_scoped_hook.md sections 9 and 10; claude/pnet-contract dd14eaa NOTES section 4"
  },
  "hook_overhead_gas": {
-  "first_swap_of_block": 38696,
-  "charged_swap": 52337,
-  "charged_swap_empty_vault_sensitivity": 69437,
-  "second_transaction_same_block": 20035
+  "first_swap_of_block": 38520,
+  "charged_swap": 52161,
+  "charged_swap_empty_vault_sensitivity": 69261,
+  "second_transaction_same_block": 19832,
+  "second_swap_in_transaction": 8637
  },
  "additional_transaction_new_block_gas": {
-  "uncharged": 159732,
-  "charged": 173373
+  "uncharged": 159556,
+  "charged": 173197
  },
  "additional_transaction_same_block_gas": {
-  "uncharged": 141071
+  "uncharged": 140868
  },
  "intrinsic_gas": 21000,
  "swap_gas_steady_state": 100036,

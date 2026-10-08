@@ -77,6 +77,10 @@ def baseline_candidates(pool_key: str, split: str, variant: str, lags, gas_units
             p = float(t["y"]) / float(t["x"])
     out = g[["t"] + [f"p_ref_{d}" for d in lags]].copy()
     out["d0"], out["d1"], out["notional"], out["C"], out["usd"] = d0, d1, notl, Cst, usd
+    out["gas_wei"], out["en"] = gas, en                     # actual gas price and ETH in numeraire (final rule)
+    bg = pd.read_parquet(CACHE / "block_gas.parquet", columns=["timestamp", "base_fee_wei"])
+    bts = pd.DatetimeIndex(bg["timestamp"]).tz_convert("UTC").as_unit("ns")
+    out["base_fee_wei"] = mg.asof_before(bts, bg["base_fee_wei"].to_numpy(float), pd.DatetimeIndex(g["t"]))
     out["R"] = R_usd / usd
     out["bf"] = bf > 0
     out["S"] = np.maximum(out["p_ref_0"] * out["d0"] + out["d1"], 0.0)
@@ -115,8 +119,11 @@ def rolling_eps(prior: pd.DataFrame, sh_prior: np.ndarray, cur: pd.DataFrame, sh
 
 
 def evaluate(c: pd.DataFrame, sh: np.ndarray, eps, eta: float, delta_kind: str, lam: float, gam: float,
-             fail_open: np.ndarray | None = None) -> dict:
-    """fail_open marks candidates whose reference is older than A_max: the hook applies r = 0 to them (Section 4.3)."""
+             fail_open: np.ndarray | None = None, final: dict | None = None) -> dict:
+    """fail_open marks candidates whose reference is older than A_max: the hook applies r = 0 to them (Section 4.3).
+    final (e4_final.yml): eps is eps_rel per candidate; see evaluate_final."""
+    if final is not None:
+        return evaluate_final(c, sh, eps, eta, delta_kind, lam, gam, fail_open, final)
     S, C, R, usd = (c[k].to_numpy() for k in ("S", "C", "R", "usd"))
     K = C + R
     Kh = (1 + eta) * K
@@ -132,6 +139,49 @@ def evaluate(c: pd.DataFrame, sh: np.ndarray, eps, eta: float, delta_kind: str, 
             "recapture_nominal": float(r.sum() / tot_S) if tot_S > 0 else np.nan,
             "recapture_effective": float(r[~viol].sum() / tot_S) if tot_S > 0 else np.nan, "transfer_usd": float((r * usd).sum()),
             "eps_S_mean_usd": float(np.mean(eps)) if len(c) else np.nan}
+
+
+def evaluate_final(c, sh, eps_rel, eta, delta_kind, lam, gam, fail_open, final) -> dict:
+    """The final rule. The hook's surplus is the bracket [S_hat - eps_rel * |d1|]^+ ("0": eps_rel = 0); delta = 0, or
+    |eta| K_hat0 for "eps_S+eps_K"; K_hat = (1 + eta) K_hat0 with K_hat0 = g_hat (base fee + tau_hat) ETH + R and g_hat
+    the charged gas. A charged correction pays the charged gas at the actual gas price, an uncharged one the uncharged."""
+    S, C, R, usd = (c[k].to_numpy() for k in ("S", "C", "R", "usd"))
+    e = np.zeros(len(c)) if delta_kind == "0" else np.asarray(eps_rel, dtype=float) * np.ones(len(c))
+    shb = np.maximum(np.maximum(sh, 0.0) - e * np.abs(c["d1"].to_numpy()), 0.0)
+    gw, en, bf = c["gas_wei"].to_numpy(), c["en"].to_numpy(), c["base_fee_wei"].to_numpy()
+    Kh0 = mg.gas_cost_num(bf + final["tau_hat_wei"], en, final["g_hat"]) + R
+    delta = np.abs(eta) * Kh0 if delta_kind == "eps_S+eps_K" else np.zeros(len(c))
+    r = transfer_est(shb, (1 + eta) * Kh0, lam, gam, delta)
+    if fail_open is not None:
+        r = np.where(fail_open, 0.0, r)
+    Cg = np.where(r > 0, mg.gas_cost_num(gw, en, final["g_hat"]), C)
+    viol = (S - Cg - r) < R - 1e-9 * np.maximum(1.0, R)
+    tot_S = S.sum()
+    return {"n": len(c), "violation_rate": float(viol.mean()) if len(c) else np.nan,
+            "recapture_nominal": float(r.sum() / tot_S) if tot_S > 0 else np.nan,
+            "recapture_effective": float(r[~viol].sum() / tot_S) if tot_S > 0 else np.nan, "transfer_usd": float((r * usd).sum()),
+            "eps_rel_median_bp": float(np.median(e)) * 1e4 if len(c) else np.nan}
+
+
+def final_eps(cfg: dict, key: str, variant: str, t) -> np.ndarray:
+    """eps_rel in force at each candidate time: the daily whole-ppb observed-swap calibration."""
+    tab = pd.read_csv(reporting.run_root() / cfg["final"]["eps_source"])
+    tab = tab[(tab["pool"] == key) & (tab["variant"] == variant)]
+    ppb = pd.Series(tab["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(tab["day"])).tz_localize(None))
+    day = pd.DatetimeIndex(t)
+    day = (day.tz_convert(None) if day.tz is not None else day).floor("D")
+    v = ppb.reindex(day).to_numpy()
+    assert np.isfinite(v).all(), f"days without a daily eps for {key} {variant}"
+    return v / 1e9
+
+
+def fitted_once_eps(key: str, variant: str, q: float) -> float:
+    """One eps_rel fitted on the validation months: P95 of |P_hat / P - 1| over all observed price-correcting swaps."""
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import eps_observed_calibration as epc
+    va = epc.observed(key, variant, "valid")
+    err = va.loc[va["correcting"], "err"].to_numpy()
+    return float(np.ceil(np.quantile(err, q) * 1e9) / 1e9) if len(err) else 0.0
 
 
 def pyth_ref(c: pd.DataFrame, pyth: pd.DataFrame, cut: pd.Timestamp):
@@ -157,7 +207,13 @@ def main():
         reporting.freeze("e4", cfg)
         print("config frozen:", reporting.config_hash(cfg)[:12])
         return
-    reporting.guard_split("e4", a.split, a.confirm_frozen, cfg)
+    fin = None
+    if "final" in cfg:                                   # not frozen yet: validation months only
+        if a.split != "valid":
+            raise SystemExit("the final-rule E4 config runs on the validation months only until it is frozen")
+        fin = {"tau_hat_wei": float(cfg["final"]["tau_hat_wei"]), "g_hat": float(cfg["gas_units"] + cfg["hook_overhead_gas_charged"])}
+    else:
+        reporting.guard_split("e4", a.split, a.confirm_frozen, cfg)
     lags = tuple(cfg["delays_min"])
     keys = a.pools.split(",") if a.pools else cfg["pools"]
     q, W = cfg["eps_quantile"], cfg["eps_window_days"]
@@ -178,6 +234,7 @@ def main():
             for k in cfg["cadences_min"]:
                 ksuf = "" if k == 1 else f"_k{k}"
                 cand = {s: baseline_candidates(key, s, variant, lags, gu, R_usd, k) for s in (["valid"] if a.split == "valid" else ["valid", "test"])}
+                eps_once = fitted_once_eps(key, variant, q) if fin is not None else None
                 prior = cand["valid"] if a.split == "test" else baseline_candidates(key, "train", variant, lags, gu, R_usd, k, tail_days=seed_days)
                 c = cand[a.split]
                 for d in lags:
@@ -190,7 +247,7 @@ def main():
                                      "eps_S_valid_usd": eps_val, "eps_S_in_sample_usd": eps_ins,
                                      "eps_S_rolling_median_usd": float(np.median(eps_roll)) if len(c) else np.nan,
                                      "R_usd": R_usd, "n_cand_valid": len(cand["valid"]), "n_cand_eval": len(c)})
-                    if a.split == "valid" and d > 0:          # window selection by coverage (validation months only)
+                    if a.split == "valid" and d > 0 and fin is None:   # window selection by coverage (validation only)
                         err = abs_err_usd(c, sh)
                         for Wg in cfg["eps_window_grid_days"]:
                             e = rolling_eps(prior, s_hat(prior, d), c, sh, Wg, q)
@@ -199,10 +256,12 @@ def main():
                     calib = [(fixed_name, eps_val), ("rolling", eps_roll)]
                     if a.split == "test":
                         calib.append(("test (in-sample)", eps_ins))
+                    if fin is not None:                  # eps_rel: the daily observed-swap calibration ("rolling") and one fit
+                        calib = [(fixed_name, np.full(len(c), eps_once)), ("rolling", final_eps(cfg, key, variant, c["t"]))]
                     for cname, eps in calib:
                         for eta in cfg["etas"]:
                             for dk in ("0", "eps_S", "eps_S+eps_K"):
-                                m = evaluate(c, sh, eps, eta, dk, cfg["lam"], cfg["gamma"])
+                                m = evaluate(c, sh, eps, eta, dk, cfg["lam"], cfg["gamma"], final=fin)
                                 rows.append({"pool": key, "variant": variant, "scenario": scen, "cadence_min": k, "delay_min": d,
                                              "calibration": cname, "eta": eta, "delta": dk,
                                              "eps_S_usd": float(np.median(eps)) if np.ndim(eps) else eps, **m})
@@ -218,10 +277,13 @@ def main():
                                      "eps_S_valid_usd": eps_val, "eps_S_in_sample_usd": eps_usd(ce, s_hat(ce, 0, re_), q),
                                      "eps_S_rolling_median_usd": float(np.median(eps_roll)) if len(ce) else np.nan, "R_usd": R_usd,
                                      "n_cand_valid": len(cv), "n_cand_eval": len(ce), "median_ref_age_s": float(np.median(ae)) if len(ae) else np.nan})
-                    for cname, eps in [(fixed_name, eps_val), ("rolling", eps_roll)]:
+                    cal_p = [(fixed_name, eps_val), ("rolling", eps_roll)]
+                    if fin is not None:
+                        cal_p = [(fixed_name, np.full(len(ce), eps_once)), ("rolling", final_eps(cfg, key, variant, ce["t"]))]
+                    for cname, eps in cal_p:
                         for eta in cfg["etas"]:
                             for dk in ("0", "eps_S", "eps_S+eps_K"):
-                                m = evaluate(ce, s_hat(ce, 0, re_), eps, eta, dk, cfg["lam"], cfg["gamma"])
+                                m = evaluate(ce, s_hat(ce, 0, re_), eps, eta, dk, cfg["lam"], cfg["gamma"], final=fin)
                                 rows.append({"pool": key, "variant": variant, "scenario": scen, "cadence_min": k, "delay_min": np.nan,
                                              "calibration": cname, "eta": eta, "delta": dk,
                                              "eps_S_usd": float(np.median(eps)) if np.ndim(eps) else eps, **m})
@@ -244,16 +306,19 @@ def main():
                                          "R_usd": R_usd, "n_cand_valid": int(fresh_v.sum()), "n_cand_eval": len(ce), "max_age_s": A,
                                          "fail_open_share": float(1 - fresh.mean()) if len(ce) else np.nan,
                                          "fail_open_share_valid_months": float(1 - fresh_v.mean()) if len(av_) else np.nan})
-                        for cname, eps in [(fixed_name, np.full(len(ce), eps_val_A)), ("rolling", eps_roll_A)]:
+                        cal_A = [(fixed_name, np.full(len(ce), eps_val_A)), ("rolling", eps_roll_A)]
+                        if fin is not None:
+                            cal_A = [(fixed_name, np.full(len(ce), eps_once)), ("rolling", final_eps(cfg, key, variant, ce["t"]))]
+                        for cname, eps in cal_A:
                             for eta in cfg["etas"]:
                                 for dk in ("0", "eps_S", "eps_S+eps_K"):
                                     base = {"pool": key, "variant": variant, "scenario": scenA, "cadence_min": k, "delay_min": np.nan,
                                             "calibration": cname, "eta": eta, "delta": dk, "max_age_s": A,
                                             "fail_open_share": float(1 - fresh.mean()) if len(ce) else np.nan}
-                                    m = evaluate(ce, she, eps, eta, dk, cfg["lam"], cfg["gamma"], fail_open=~fresh)
+                                    m = evaluate(ce, she, eps, eta, dk, cfg["lam"], cfg["gamma"], fail_open=~fresh, final=fin)
                                     rows.append({**base, "conditioning": "all", "eps_S_usd": float(np.median(eps[fresh])) if fresh.any() else np.nan, **m})
                                     if fresh.any():
-                                        m = evaluate(ceA, she[fresh], eps[fresh], eta, dk, cfg["lam"], cfg["gamma"])
+                                        m = evaluate(ceA, she[fresh], eps[fresh], eta, dk, cfg["lam"], cfg["gamma"], final=fin)
                                         rows.append({**base, "conditioning": "valid_price", "eps_S_usd": float(np.median(eps[fresh])), **m})
                 print(key, variant, f"k={k}", "done", {s: len(v) for s, v in cand.items()}, "prior", len(prior), flush=True)
 
@@ -282,7 +347,10 @@ def main():
         notes.append({"pool": pk, "variant": v, "monotone_in_d": mono, **{f"d{int(r.delay_min)}": round(r.violation_rate, 4) for r in g.itertuples()}})
     pd.DataFrame(notes).to_csv(out / "tables" / f"e4_sanity_delta0_{tag}.csv", index=False)
     figs(summ, out, tag, cfg)
-    reporting.write_manifest("e4", cfg, [CACHE / "aligned" / f"{k}.parquet" for k in keys], a.split)
+    ins = [CACHE / "aligned" / f"{k}.parquet" for k in keys]
+    if fin is not None:
+        ins += [reporting.run_root() / cfg["final"]["eps_source"], ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
+    reporting.write_manifest("e4", cfg, ins, a.split, {"final": cfg.get("final"), "results_run": reporting.RESULTS_RUN})
     with pd.option_context("display.width", 250, "display.max_columns", 30):
         print(pd.DataFrame(notes).to_string(index=False))
         s = summ[(summ["eta"] == 0) & (summ["delay_min"].isin([0, 5, 60])) & (summ["calibration"] == "rolling") & (summ["pool"] == "eth_usdc_005")]

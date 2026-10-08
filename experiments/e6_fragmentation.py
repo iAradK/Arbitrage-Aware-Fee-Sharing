@@ -60,7 +60,7 @@ def all_candidates(pool_key: str, variant: str, split: str, cfg: dict, R_usd: fl
     C = mg.gas_cost_num(c["gas_price_wei"].to_numpy(), c["eth_in_num"].to_numpy(), cfg["gas_units"] + cfg["hook_overhead_gas"])
     usd = c["usd_per_num"].to_numpy()
     R = R_usd / usd
-    c = c.assign(x=x, y=y, dirn=dirn, n_used=n_used, S=S, C=C, R=R, S_usd=S * usd, C_usd=C * usd)
+    c = c.assign(x=x, y=y, dirn=dirn, n_used=n_used, S=S, C=C, R=R, S_usd=S * usd, C_usd=C * usd, d1=tr["d1"])
     return c, n_raw
 
 
@@ -113,6 +113,57 @@ def reversal_prefix_surplus(o, n: int, pool) -> np.ndarray:
     return np.array(A)
 
 
+def fragment_deltas(o, cum_inputs: np.ndarray, pool, dirs=None) -> tuple[np.ndarray, np.ndarray]:
+    """Per-fragment trader deltas (d0 token0, d1 token1, numeraire units) of a sequential path; cum_inputs are the
+    forward path's cumulative net inputs (dirs None), or the (direction, amount) steps of a mixed path."""
+    if dirs is None:
+        t = cpmm.trade(o.x, o.y, pool.fee, o.dirn, cum_inputs)
+        c0, c1 = np.concatenate([[0.0], np.atleast_1d(t["d0"])]), np.concatenate([[0.0], np.atleast_1d(t["d1"])])
+        return np.diff(c0), np.diff(c1)
+    x, y, d0s, d1s = o.x, o.y, [], []
+    for dr, amt in dirs:
+        t = cpmm.trade(x, y, pool.fee, dr, amt)
+        x, y = float(t["x"]), float(t["y"])
+        d0s.append(float(t["d0"]))
+        d1s.append(float(t["d1"]))
+    return np.array(d0s), np.array(d1s)
+
+
+def reversal_steps(o, n: int) -> list:
+    """The (direction, net input) steps of reversal_prefix_surplus."""
+    n_f = max(1, n // 2)
+    steps = [(int(o.dirn), o.n_used / n_f)] * n_f
+    if n >= 2:
+        steps.append((-int(o.dirn), 0.5 * o.n_used * (o.pi if int(o.dirn) < 0 else 1.0 / o.pi)))
+    rest = n - len(steps)
+    steps += [(int(o.dirn), 0.5 * o.n_used / max(rest, 1))] * max(rest, 0)
+    return steps[:n]
+
+
+def block_scope_charges(o, d0s, d1s, layout: str, K_usd: float, eps_rel: float, lam_bps: int, gam_bps: int) -> tuple[int, int]:
+    """Total charge (ETH wad) of a fragment path through the final hook's integer reference, contract orientation
+    (token0 = ETH, token1 = the pool's numeraire token, reference = token0 per token1 = 1 / pi). layout: "one" (one swap,
+    the sum of the deltas), "tx" (one transaction), "txs" (one transaction per fragment, one block). Returns the total
+    collected and F(final block surplus)."""
+    usd = o.usd_per_num
+    S = 10 ** 18
+    ref = int(round(S / o.pi))                              # token0 (ETH) per token1 unit, WAD
+    k_w = int(round(K_usd / (o.pi * usd) * S))              # kappa in ETH wad
+    h = fp.ScopedHookReference(k_w, 0, lam_bps, gam_bps, scope="block", accumulation="tx_clip", buffer="rel",
+                               eps_wad=int(round(eps_rel * 1e9)) * 10 ** 9, volume="net")
+    c0 = np.round(np.cumsum(np.concatenate([[0.0], d0s])) * S).astype(object)
+    c1 = np.round(np.cumsum(np.concatenate([[0.0], d1s])) * S).astype(object)
+    i0, i1 = [int(c0[j + 1] - c0[j]) for j in range(len(d0s))], [int(c1[j + 1] - c1[j]) for j in range(len(d1s))]
+    if layout == "one":
+        i0, i1 = [sum(i0)], [sum(i1)]
+    tot = 0
+    for j, (a0, a1) in enumerate(zip(i0, i1)):
+        tot += h.swap("p", 1, j if layout == "txs" else 0, a0, a1, ref, settle_token0=True)
+    A = h.surplus("p")
+    F_A = fp.transfer_wad(A, k_w, lam_bps * fp.BPS_TO_WAD, gam_bps * fp.BPS_TO_WAD, 0)[0]
+    return tot, F_A
+
+
 def to_int_prefix(A_num: np.ndarray, usd: float) -> list[int]:
     return [fp.to_wad(a * usd) for a in A_num]
 
@@ -130,13 +181,23 @@ def main():
         reporting.freeze("e6", cfg)
         print("config frozen:", reporting.config_hash(cfg)[:12])
         return
-    reporting.guard_split("e6", a.split, a.confirm_frozen, cfg)
+    if "final" in cfg:                                   # not frozen yet: validation months only
+        if a.split != "valid":
+            raise SystemExit("the final-rule E6 config runs on the validation months only until it is frozen")
+    else:
+        reporting.guard_split("e6", a.split, a.confirm_frozen, cfg)
     rng = np.random.default_rng(cfg["seed"])
     lam, gam, delta = fp.to_wad(cfg["lam"]), fp.to_wad(cfg["gamma"]), fp.to_wad(cfg["delta_usd"])
     gp = RESULTS / "e7" / "gas_profile.json"
     gas_src = "measured (results/e7/gas_profile.json)" if gp.exists() else "placeholder: old paper figures"
     g_first, g_extra = cfg["gas_first_call"], cfg["gas_per_extra_fragment"]
-    if gp.exists():
+    fin = cfg.get("final")
+    if fin is not None:                                  # the final block-scoped hook's fragment gas
+        g_first, g_extra = fin["gas_first_call"], fin["gas_per_extra_fragment"]
+        gas_src = "final block-scoped hook (BlockScopedHookFragmentGasTest, config/gas_block_scope.json)"
+        lam_bps, gam_bps = int(round(cfg["lam"] * 1e4)), int(round(cfg["gamma"] * 1e4))
+        epst = pd.read_csv(reporting.run_root() / fin["eps_source"])
+    elif gp.exists():
         prof = json.load(open(gp))
         g_first, g_extra = prof["first_call_gas"], prof["extra_fragment_gas"]
     rows, opp_rows, det = [], [], []
@@ -148,9 +209,20 @@ def main():
             opp_rows.append({"pool": key, "variant": variant, "gap_multiple": cfg["gap_multiple"][key], **info,
                              "note": "all available used" if info.get("selected", 0) < cfg["n_opportunities"] else ""})
             print(key, variant, info, flush=True)
+            if fin is not None and len(opps):
+                et = epst[(epst["pool"] == key) & (epst["variant"] == variant)]
+                ppb = pd.Series(et["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(et["day"])).tz_localize(None))
+                dd = pd.DatetimeIndex(opps["timestamp"])
+                dd = (dd.tz_convert(None) if dd.tz is not None else dd).floor("D")
+                opps = opps.assign(eps_rel=ppb.reindex(dd).to_numpy() / 1e9)
+                assert opps["eps_rel"].notna().all(), f"{key} {variant}: opportunity days without a daily eps"
             for n in cfg["partitions"]:
                 agg = {"n_opps": 0, "mono_exact_fail": 0, "rev_max_fail": 0, "rev_negative_charge": 0, "cor1_fail": 0, "opt_exact_fail": 0,
                        "indep_ratio_equal": [], "indep_ratio_opt": [], "n_rev": 0, "n_opt": 0, "float_int_gap": 0.0}
+                if fin is not None:                      # block-scoped checks (final hook, integer reference)
+                    agg.update({"bs_n_charged_unsplit": 0, "bs_one_tx_ne_unsplit": 0, "bs_txs_below_unsplit": 0,
+                                "bs_txs_equal_unsplit": 0, "bs_txs_above_unsplit": 0, "bs_txs_max_shortfall_wei": 0,
+                                "bs_txs_ratio": [], "bs_rev_ne_F": 0, "bs_rev_negative": 0, "bs_indep_ratio": []})
                 for o in opps.itertuples():
                     usd, K_num = o.usd_per_num, o.C + o.R
                     K_usd = K_num * usd
@@ -195,6 +267,30 @@ def main():
                         if F_o > 0:
                             r_o = float(mech.independent_charges(s_opt, K_usd, cfg["lam"], cfg["gamma"], cfg["delta_usd"]).sum()) / F_o
                             agg["indep_ratio_opt"].append(min(r_o, agg["indep_ratio_equal"][-1] if F_full > 0 else r_o))   # adversary takes the better split
+                    if fin is not None:                  # block-scoped reference, final hook
+                        d0s, d1s = fragment_deltas(o, fracs * o.n_used, pool)
+                        U, _ = block_scope_charges(o, d0s, d1s, "one", K_usd, o.eps_rel, lam_bps, gam_bps)
+                        T1, _ = block_scope_charges(o, d0s, d1s, "tx", K_usd, o.eps_rel, lam_bps, gam_bps)
+                        Tn, _ = block_scope_charges(o, d0s, d1s, "txs", K_usd, o.eps_rel, lam_bps, gam_bps)
+                        agg["bs_one_tx_ne_unsplit"] += int(T1 != U)
+                        if U > 0:
+                            agg["bs_n_charged_unsplit"] += 1
+                            agg["bs_txs_ratio"].append(Tn / U)
+                            agg["bs_txs_below_unsplit"] += int(Tn < U)
+                            agg["bs_txs_equal_unsplit"] += int(Tn == U)
+                            agg["bs_txs_above_unsplit"] += int(Tn > U)
+                            agg["bs_txs_max_shortfall_wei"] = max(agg["bs_txs_max_shortfall_wei"], int(U - Tn))
+                        # independent per-swap rule with the final buffer (Fig. 4d): each fragment its own scope
+                        sb = np.maximum(o.pi * d0s + d1s - o.eps_rel * np.abs(d1s), 0.0) * usd
+                        unb = max(float(o.pi * d0s.sum() + d1s.sum() - o.eps_rel * abs(d1s.sum())), 0.0) * usd
+                        F_u = float(mech.F_scalar(unb, K_usd, cfg["lam"], cfg["gamma"], 0.0))
+                        if F_u > 0:
+                            agg["bs_indep_ratio"].append(float(mech.independent_charges(sb, K_usd, cfg["lam"], cfg["gamma"], 0.0).sum()) / F_u)
+                        if n >= 2:                       # reversal path across transactions: sum of charges = F(final block surplus)
+                            r0, r1 = fragment_deltas(o, None, pool, reversal_steps(o, n))
+                            Tr, F_A = block_scope_charges(o, r0, r1, "txs", K_usd, o.eps_rel, lam_bps, gam_bps)
+                            agg["bs_rev_ne_F"] += int(Tr != F_A)
+                            agg["bs_rev_negative"] += int(Tr < 0)
                     # reversal path (needs at least 2 fragments)
                     if n >= 2:
                         A_r = reversal_prefix_surplus(o, n, pool) * usd
@@ -208,7 +304,11 @@ def main():
                 rows.append({"pool": key, "variant": variant, "n_fragments": n, **{k: v for k, v in agg.items() if not isinstance(v, list)},
                              "indep_over_cumulative_equal": float(np.mean(agg["indep_ratio_equal"])) if agg["indep_ratio_equal"] else np.nan,
                              "indep_over_cumulative_optimal": float(np.mean(agg["indep_ratio_opt"])) if agg["indep_ratio_opt"] else np.nan,
-                             "cumulative_over_cumulative": 1.0})
+                             "cumulative_over_cumulative": 1.0,
+                             **({"bs_txs_over_unsplit_mean": float(np.mean(agg["bs_txs_ratio"])) if agg["bs_txs_ratio"] else np.nan,
+                                 "bs_txs_over_unsplit_min": float(np.min(agg["bs_txs_ratio"])) if agg["bs_txs_ratio"] else np.nan,
+                                 "bs_indep_over_unsplit_equal": float(np.mean(agg["bs_indep_ratio"])) if agg["bs_indep_ratio"] else np.nan}
+                                if fin is not None else {})})
     res = pd.DataFrame(rows)
     tag = a.split
     reporting.write_table(res, out / "tables" / f"e6_checks_{tag}", {"indep_over_cumulative_equal": "{:.3f}", "indep_over_cumulative_optimal": "{:.3f}", "float_int_gap": "{:.1e}"})
@@ -219,7 +319,10 @@ def main():
     gt = pd.DataFrame({"n_fragments": ns, "cumulative_gas_k": [c / 1e3 for c in cum_gas], "penalty_vs_n1_pct": [100 * (c / cum_gas[0] - 1) for c in cum_gas],
                        "source": gas_src})
     reporting.write_table(gt, out / "tables" / f"e6_gas_penalty_{tag}", {"cumulative_gas_k": "{:.1f}", "penalty_vs_n1_pct": "{:.1f}"})
-    reporting.write_manifest("e6", cfg, [CACHE / "aligned" / f"{k}.parquet" for k in cfg["pools"]], a.split, {"gas_source": gas_src})
+    ins = [CACHE / "aligned" / f"{k}.parquet" for k in cfg["pools"]]
+    if fin is not None:
+        ins += [reporting.run_root() / fin["eps_source"], ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
+    reporting.write_manifest("e6", cfg, ins, a.split, {"gas_source": gas_src, "results_run": reporting.RESULTS_RUN})
     tot = res[["mono_exact_fail", "opt_exact_fail", "rev_max_fail", "rev_negative_charge", "cor1_fail"]].sum()
     print("VIOLATION COUNTS (expected 0):", tot.to_dict())
     with pd.option_context("display.width", 250, "display.max_columns", 30):

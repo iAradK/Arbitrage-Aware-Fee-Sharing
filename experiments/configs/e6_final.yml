@@ -1,0 +1,33 @@
+experiment: e6
+# Final-rule rerun (2026-10-08), validation months only, RESULTS_RUN=final_valid. Differences from e6.yml are under
+# `final`: the fragment gas of the final block-scoped hook (BlockScopedHookFragmentGasTest: first swap of a block 38,520
+# when the block surplus changes, each further swap in the same transaction 8,637), and block-scoped checks through
+# common.fixedpoint.ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel", volume="net") in the
+# contract's orientation (token0 = ETH), with eps_rel the daily observed-swap calibration.
+seed: 20260924
+pools: [eth_usdc_005, eth_wbtc_030, eth_wsteth_001]   # USDC/USDT excluded (DECISIONS W8, H2)
+variants:
+  eth_usdc_005: [raw]
+  usdc_usdt_0001: [raw]
+  eth_wbtc_030: [raw, corr24h]
+  eth_wsteth_001: [raw, corr24h]
+n_opportunities: 100000         # v2: all eligible opportunities (v1 sampled 100 per pool and variant, stratified by surplus quartile)
+partitions: [1, 2, 4, 8, 16]
+lam: 0.75
+gamma: 0.05
+delta_usd: 0.0
+gas_units: 150000               # arbitrage tx gas excluding the hook (assumption)
+hook_overhead_gas: 38520        # final hook, first swap of a block (config/gas_block_scope.json)     # v4 (DECISIONS H6): measured in E7 on the current contract with settlement (commit 8ca840a), cold first call, results/e7/gas_profile.json first_call_gas; v2/v3 used 30032
+r_regime: median
+r_quantiles: [0.25, 0.5, 0.75]
+min_fragment_usd: 0.05          # smallest surplus fragment in the adversarial partition search
+# fragment gas: replaced by measured Foundry numbers (results/e7/gas_profile.json) when that file exists.
+# Placeholders are the old paper's figures: 28,237 first call, 22,578 per extra callback.
+gas_first_call: 28237
+gas_per_extra_fragment: 22578
+# opportunity definition (brief): pre-swap deviation > gap_multiple * fee and the swap moves the price toward the reference.
+gap_multiple: {eth_usdc_005: 1.0, usdc_usdt_0001: 2.0, eth_wbtc_030: 1.0, eth_wsteth_001: 1.0}
+final:
+  eps_source: eps_observed/eps_observed_daily_valid.csv   # under results/<RESULTS_RUN>
+  gas_first_call: 38520
+  gas_per_extra_fragment: 8637

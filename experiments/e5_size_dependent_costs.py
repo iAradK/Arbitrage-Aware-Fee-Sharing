@@ -92,11 +92,26 @@ def main():
         err_after = np.abs(np.log(p_post / pi))
         err_before = np.abs(np.log(sc["p_start"].to_numpy()[:, None] / pi))
         has = (n0 > 0)[:, 0]
+        final = "final" in cfg
+        if final:                                        # the hook's buffer: eps_rel of the scenario's day times |d1|, in USD
+            tab = pd.read_csv(reporting.run_root() / cfg["final"]["eps_source"])
+            tab = tab[(tab["pool"] == key) & (tab["variant"] == cfg["variant"])]
+            ppb = pd.Series(tab["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(tab["day"])).tz_localize(None))
+            day = pd.DatetimeIndex(sc["t"]).tz_convert(None).floor("D")
+            eps_rel = ppb.reindex(day).to_numpy()
+            assert np.isfinite(eps_rel).all(), f"{key}: scenario days without a training eps"
+            Sb = np.maximum(S - eps_rel[:, None] * np.abs(tr["d1"]) * usd, 0.0)
+        else:
+            Sb = S
         for gu, (brank, bps), m, mode in itertools.product(cfg["gas_units"], [(-1, 0.0)] + list(enumerate(cfg["external_fee_bps"][key])), cfg["curvature_multiple"], cfg["k_hat_modes"]):
             c0 = mg.gas_cost_num(sc["gas_wei"].to_numpy(), sc["eth_in_num"].to_numpy(), gu + cfg["hook_overhead_gas"])[:, None] * usd
             c1 = bps * 1e-4
             c2 = m * c1 / (2 * N_med)
             C = c0 + c1 * N + c2 * N ** 2
+            # final: a charged correction pays the charged hook gas, and the hook's K_hat uses it; otherwise C_ch = C
+            c0_ch = (mg.gas_cost_num(sc["gas_wei"].to_numpy(), sc["eth_in_num"].to_numpy(), gu + cfg["hook_overhead_gas_charged"])[:, None]
+                     * usd) if final else c0
+            C_ch = c0_ch + c1 * N + c2 * N ** 2
             R = reg
             base_pay = S - C
             j0 = argmax_smallest(base_pay)
@@ -105,10 +120,10 @@ def main():
             # size-dependent cost at the baseline optimum (the part of K the hook does not see); fitted on the same train scenarios
             sd = (C - c0)[np.arange(len(sc)), j0]
             dK = float(np.quantile(sd[bf], 0.95)) if (mode == "gas_only_buf" and bf.any()) else 0.0
-            Khat = (C + R) if mode == "exact" else (c0 + R + dK)
+            Khat = (C_ch + R) if mode == "exact" else (c0_ch + R + dK)
             for lam, gamma in itertools.product(cfg["lambdas"], cfg["gammas"]):
-                r = np.minimum(lam * S, (1 - gamma) * np.maximum(S - Khat, 0.0))
-                Pi = S - C - r
+                r = np.minimum(lam * Sb, (1 - gamma) * np.maximum(Sb - Khat, 0.0))
+                Pi = S - np.where(r > 0, C_ch, C) - r
                 feas = Pi >= R - 1e-9 * max(1.0, R)
                 anyf = feas.any(axis=1)
                 jb = argmax_smallest(np.where(feas, Pi, -np.inf))
@@ -135,7 +150,11 @@ def main():
     slice_ = res[(res["gas_units"] == 150000) & (res["bps_rank"] == 1) & (res["curvature"] == 0.5) & (res["lam"] == 0.75)]
     reporting.write_table(slice_.drop(columns=["gas_units", "bps_rank", "curvature", "lam", "n_scenarios", "N_med_usd"]), out / "tables" / "e5_slice_gas150k_5bps_curv0.5",
                           {c: "{:.3f}" for c in ["execution_rate", "baseline_optimum_kept", "q_ratio_median", "q_ratio_mean", "surplus_ratio_mean", "recapture"]} | {"price_error_mean": "{:.2e}"})
-    reporting.write_manifest("e5", cfg, [CACHE / "aligned" / f"{k}.parquet" for k in cfg["pools"]], "train", {"note": "train months only"})
+    ins = [CACHE / "aligned" / f"{k}.parquet" for k in cfg["pools"]]
+    if "final" in cfg:
+        ins += [reporting.run_root() / cfg["final"]["eps_source"], ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
+    reporting.write_manifest("e5", cfg, ins, "train", {"note": "train months only", "final": cfg.get("final"),
+                                                         "results_run": reporting.RESULTS_RUN})
     figs(res, out, cfg)
     with pd.option_context("display.width", 250, "display.max_columns", 30):
         print(slice_[slice_["k_hat"] == "gas_only"][["pool", "gamma", "n_baseline_feasible", "execution_rate", "baseline_optimum_kept", "q_ratio_median", "surplus_ratio_mean", "price_error_mean", "recapture"]].round(4).to_string(index=False))

@@ -1,0 +1,31 @@
+experiment: e7
+# Final-rule rerun (2026-10-08), validation months only, RESULTS_RUN=final_valid. Differences from e7.yml are under
+# `final`: the charging threshold uses g_hat = arb_tx_gas + the charged hook gas (52,161), tau_hat = 3 gwei, and the
+# proportional buffer: an opportunity is charged when S >= K_hat + eps_rel * V_hat, V_hat its net token1 change in USD and
+# eps_rel the daily observed-swap calibration. --fragments measures the final hook's per-fragment gas.
+seed: 20260924
+pools: [eth_usdc_005, eth_wbtc_030, eth_wsteth_001]   # USDC/USDT excluded (fee tier 0.001%, DECISIONS W8/W11)
+# --- conformance vectors (drawn from validation-month replay states; the test months are not used for vectors)
+atomic_states_per_pool: 8          # 3 pools x 8 states x 4 lambdas = 96 cases (128 with USDC/USDT before W11)
+lambdas: [0.25, 0.5, 0.75, 0.95]
+gamma: 0.05
+delta_from_e4_lag_min: 5           # delta = eps_S(d = 5) fitted on validation (results/e4), per pool
+state_multiples_of_K: [0.5, 0.9, 1.5, 2, 4, 8, 30, 300]   # target S / (K + delta) so that all three outcome classes occur
+sequence_opportunities_per_pool: 2
+sequence_partitions: [2, 4, 8, 16]
+# --- minimum viable surplus  S_min = C_gas_hat + B_hat + C_hedge_hat + C_slip_hat + R_protocol + delta
+arb_tx_gas: 150000                 # gas of the arbitrage transaction excluding the hook (assumption, as in E2/E5/E6)
+tip_mode: train_median_constant   # hook gas price in Eq. (9) = base fee + constant tip tau_hat (train-median tip_p50); v2 used each block's own median tip ("block_median"). User decision 2026-09-29.
+B_hat_usd: 0.0                     # builder payment, hedging and external slippage estimates: no data, set to 0 and stated as such
+C_hedge_hat_usd: 0.0
+C_slip_hat_usd: 0.0
+r_regime: median                   # R_protocol = median reservation payoff of the pool (train swaps, DECISIONS D6)
+r_quantiles: [0.25, 0.5, 0.75]
+smin_quantiles: [0.05, 0.25, 0.5, 0.75, 0.95]
+smin_share_split: valid            # split of the E6-type opportunities used for the share S >= S_min
+forge_project: contracts
+final:
+  hook_overhead_gas_charged: 52161
+  tau_hat_wei: 3000000000
+  eps_source: eps_observed/eps_observed_daily_valid.csv   # under results/<RESULTS_RUN>
+  e6_config: experiments/configs/e6_final.yml

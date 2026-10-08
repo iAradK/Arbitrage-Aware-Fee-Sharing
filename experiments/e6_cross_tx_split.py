@@ -15,6 +15,8 @@ swap and the hook, results/e7/hook_gas_isolated.csv) at the block's actual gas p
 """
 from __future__ import annotations
 
+import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -51,7 +53,65 @@ def best_two_tx_saving(a, c, lam, gam):
     return val[rows, j], both_charged
 
 
+def main_final():
+    """--final: the final block-scoped hook. Splitting inside a block saves nothing (one kappa per block), so the split is
+    across two blocks: s = max over a1 of F(a) - F(a1) - F(a - a1), with a the buffered bracket [S - eps_rel |d1|]^+
+    (the buffer splits with the volume) and c = K_hat = g_hat (base fee + 3 gwei) ETH + R, g_hat = 150,000 + the charged
+    hook gas. The extra transaction in a new block costs 159,556 gas, 173,197 when both parts are charged
+    (config/gas_block_scope.json), at the block's actual gas price. Validation months. Delay costs are not included."""
+    cfg = reporting.load_config(ROOT / "experiments" / "configs" / "e6_final.yml")
+    gj = json.loads((ROOT / "config" / "gas_block_scope.json").read_text())
+    split = "valid"
+    lam, gam = cfg["lam"], cfg["gamma"]
+    R_usd = mg.r_regimes_usd(POOL, VARIANT, cfg["gas_units"], cfg["r_quantiles"])[cfg["r_regime"]]
+    c_all, _ = e6.all_candidates(POOL, VARIANT, split, cfg, R_usd)
+    sam = c_all[(c_all["n_used"] > 0) & (c_all["S"] - c_all["C"] >= c_all["R"])].reset_index(drop=True)
+    et = pd.read_csv(reporting.run_root() / cfg["final"]["eps_source"])
+    et = et[(et.pool == POOL) & (et.variant == VARIANT)]
+    ppb = pd.Series(et["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(et["day"])).tz_localize(None))
+    dd = pd.DatetimeIndex(sam["timestamp"])
+    dd = (dd.tz_convert(None) if dd.tz is not None else dd).floor("D")
+    e_rel = ppb.reindex(dd).to_numpy() / 1e9
+    assert np.isfinite(e_rel).all()
+    eth, usd = sam["eth_usd"].to_numpy(), sam["usd_per_num"].to_numpy()
+    a = np.maximum(sam["S_usd"].to_numpy() - e_rel * np.abs(sam["d1"].to_numpy()) * usd, 0.0)
+    g_hat = cfg["gas_units"] + gj["hook_overhead_gas"]["charged_swap"]
+    tau = 3e9
+    c = g_hat * (sam["base_fee_wei"].to_numpy() + tau) * 1e-18 * eth + R_usd
+    s, both = best_two_tx_saving(a, c, lam, gam)
+    grid = np.linspace(0.0, 1.0, 2001)[None, :] * a[:, None]
+    s_grid = (F(a[:, None], c[:, None], lam, gam) - F(grid, c[:, None], lam, gam) - F(a[:, None] - grid, c[:, None], lam, gam)).max(1)
+    assert np.all(s_grid <= s + 1e-9) and np.all(s <= (1 - gam) * c + 1e-9)
+    ex_u, ex_c = gj["additional_transaction_new_block_gas"]["uncharged"], gj["additional_transaction_new_block_gas"]["charged"]
+    cost = np.where(both, ex_c, ex_u) * sam["gas_price_wei"].to_numpy() * 1e-18 * eth
+    cost_med = gj["usd_per_gas_median"] * ex_u
+    net, net_fixed = s - cost, s - cost_med
+    big = a >= 2 * c
+    q = lambda x, p: float(np.quantile(x, p))  # noqa: E731
+    row = {"pool": POOL, "variant": VARIANT, "split": split, "n": len(sam), "lam": lam, "gamma": gam, "R_usd": R_usd, "tau_hat_wei": tau,
+           "g_hat": g_hat, "extra_tx_gas_uncharged": ex_u, "extra_tx_gas_charged": ex_c, "median_eps_rel_bp": float(np.median(e_rel)) * 1e4,
+           "share_best_split_both_charged": float(both.mean()), "c_median_usd": q(c, 0.5), "a_median_usd": q(a, 0.5),
+           "share_a_ge_2c": float(big.mean()), "n_a_ge_2c": int(big.sum()), "saving_median_usd": q(s, 0.5), "saving_p95_usd": q(s, 0.95),
+           "extra_tx_cost_median_usd": q(cost, 0.5), "extra_tx_cost_fixed_usd": cost_med,
+           "net_median_usd": q(net, 0.5), "net_p95_usd": q(net, 0.95), "share_net_positive": float((net > 0).mean()),
+           "net_fixed_median_usd": q(net_fixed, 0.5), "net_fixed_p95_usd": q(net_fixed, 0.95),
+           "net_median_a_ge_2c_usd": q(net[big], 0.5) if big.any() else np.nan}
+    res = pd.DataFrame([row])
+    out = reporting.out_dir("e6")
+    reporting.write_table(res, out / "tables" / "e6_cross_block_split_valid", {k: "{:.4f}" for k in row if k.endswith("usd") or k.startswith("share")})
+    reporting.write_manifest("e6", cfg, [CACHE / "aligned" / f"{POOL}.parquet", CACHE / "block_gas.parquet",
+                                         reporting.run_root() / cfg["final"]["eps_source"], ROOT / "config" / "gas_block_scope.json"], split,
+                             {"analysis": "cross-block split under the final hook", "results_run": reporting.RESULTS_RUN},
+                             tag="cross_block_split_valid", latest=False)
+    with pd.option_context("display.width", 200):
+        print(res.T.to_string())
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--final", action="store_true", help="the final hook: cross-block split, validation months")
+    if ap.parse_args().final:
+        return main_final()
     cfg = reporting.load_config(ROOT / "experiments" / "configs" / "e6.yml")
     lam, gam, delta = cfg["lam"], cfg["gamma"], cfg["delta_usd"]
     R_usd = mg.r_regimes_usd(POOL, VARIANT, cfg["gas_units"], cfg["r_quantiles"])[cfg["r_regime"]]

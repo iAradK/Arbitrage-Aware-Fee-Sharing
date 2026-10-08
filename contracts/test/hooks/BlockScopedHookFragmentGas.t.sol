@@ -19,7 +19,7 @@ import {BlockScopedHookTestBase, SwapProbe} from "./BlockScopedHookTestBase.sol"
 /// Each layout starts from steady state: the pool has had a scope in an earlier block and the oracle price has moved.
 /// The same sequence runs on a pool without a hook. Overhead(n) = sum over fragments of gas with the hook minus without.
 /// Output lines: BSFRAG,<layout>,<n>,<hook 0|1>,<fragment>,<gas>. The hook is _finalParams (P-net, eps 28.3 bp,
-/// g_hat 180,214, tau 3 gwei, gasPriceToken0Wad 1e18).
+/// g_hat 202,161, tau 3 gwei, gasPriceToken0Wad 1e18).
 contract BlockScopedHookFragmentGasTest is BlockScopedHookTestBase {
     using PoolIdLibrary for PoolKey;
 

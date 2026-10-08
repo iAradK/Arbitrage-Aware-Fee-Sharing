@@ -102,7 +102,7 @@ abstract contract BlockScopedHookTestBase is Deployers {
         return _params(K_HAT, DELTA, LAMBDA_BPS, GAMMA_BPS);
     }
 
-    uint64 internal constant FINAL_GAS_UNITS = 180_214;
+    uint64 internal constant FINAL_GAS_UNITS = 202_161; // g_hat = 150,000 + the charged hook gas 52,161 (DECISIONS I3, config/gas_block_scope.json)
     uint64 internal constant FINAL_TAU_WEI = 3 gwei; // Q3
     uint16 internal constant FINAL_GAMMA_BPS = 200; // E2 headline gamma = 0.02
     uint32 internal constant FINAL_EPS_PPB = 2_830_000; // eps_rel = 0.283% (Q4 median, ETH/USDC)

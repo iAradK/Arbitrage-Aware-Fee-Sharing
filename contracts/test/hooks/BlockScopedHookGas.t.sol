@@ -42,7 +42,7 @@ import {ParticipationAwareHook} from "../../src/hooks/ParticipationAwareHook.sol
 ///                 uncharged swap's bracket clips to 0, so P is rewritten unchanged (0 -> 0).
 ///   second_tx_positive_surplus  second_tx on that pool: P grows by the second bracket
 /// The block-scoped hook runs in the evaluated configuration (_finalParams: V1 with the
-/// relative buffer eps_rel = 0.283%, g_hat = 180,214, tau_hat = 3 gwei, gamma = 0.02).
+/// relative buffer eps_rel = 0.283%, g_hat = 202,161, tau_hat = 3 gwei, gamma = 0.02).
 contract BlockScopedHookGasTest is BlockScopedHookTestBase {
     using PoolIdLibrary for PoolKey;
 

@@ -58,21 +58,29 @@ def hashed_cfg(cfg: dict, cfg2: dict) -> dict:
 
 def configs(cfg: dict, cfg2: dict, beta_cal: float | None) -> pd.DataFrame:
     h = cfg["headline"]
-    C2 = e2.make_configs(cfg2)
+    final = "final" in cfg2                             # e8_final.yml: the final rule's traces (e2_final.yml)
+    C2 = e2.final_configs(cfg2) if final else e2.make_configs(cfg2)
     lam_ok, gam_ok = np.isclose(C2["lam"], h["lambda"]), np.isclose(C2["gamma"], h["gamma"])
     keep = (C2["mech"] == "baseline") | C2["mech"].str.startswith("static") | \
            (C2["mech"].isin(["unconstrained", "cap_gamma0"]) & lam_ok) | \
            (C2["mech"].isin(["retained", "buffered_1eps", "buffered_2eps"]) & lam_ok & gam_ok)
     base = C2[keep].reset_index(drop=True)
     assert base["mech"].iloc[0] == "baseline" and base["mech"].is_unique
-    base = base.assign(family="as_frozen", gas_ch=base["gas"], ghat=base["gas"], buf="abs", beta=0.0, tax_t=0.0)
-    g_set = float(cfg2["gas_units"] + cfg["hook_overhead_settled_gas"])
+    if final:                                           # keep the final rule's charged gas, g_hat and buffer
+        base = base.assign(family="as_frozen", beta=0.0, tax_t=0.0)
+        g_set = float(e2.final_configs(cfg2, cfg["final_settle"])["gas_ch"].iloc[0])
+    else:
+        base = base.assign(family="as_frozen", gas_ch=base["gas"], ghat=base["gas"], buf="abs", beta=0.0, tax_t=0.0)
+        g_set = float(cfg2["gas_units"] + cfg["hook_overhead_settled_gas"])
     charged = base[base["mech"] != "baseline"]
     settle = charged.assign(family="settle", mech=charged["mech"] + "+settle", gas_ch=g_set, ghat=g_set)
     buf = base[base["mech"].str.startswith("buffered")]
     one = pd.concat([buf.assign(mech=buf["mech"] + "+1s"),
-                     buf.assign(mech=buf["mech"] + "+settle+1s", gas_ch=g_set, ghat=g_set)]).assign(family="onesided", buf="signed")
+                     buf.assign(mech=buf["mech"] + "+settle+1s", gas_ch=g_set, ghat=g_set)]).assign(family="onesided",
+                                                                                                buf="prop1s" if final else "signed")
     proto = base.iloc[[0]]
+    if final:                                           # the MEV tax and the dynamic fee pay the uncharged hook gas, no settlement
+        proto = proto.assign(gas_ch=proto["gas"], ghat=proto["gas"], buf="abs")
     mev = pd.concat([proto.assign(mech=f"mevtax_t{t:g}", kind=e2.MEVTAX, tax_t=float(t)) for t in cfg["mev_tax_t"]]).assign(family="mevtax")
     betas = [(f"dynfee_b{b:g}", float(b)) for b in cfg["dynfee_beta_grid"]] + ([("dynfee_cal", float(beta_cal))] if beta_cal is not None else [])
     dyn = pd.concat([proto.assign(mech=m, kind=e2.DYNFEE, beta=b) for m, b in betas]).assign(family="dynfee")
@@ -134,7 +142,12 @@ def run_tag(cfg, cfg2, split, d, k, regimes, cal, prior, tag):
         for rname in regimes:
             R = R_all[rname]
             seed = e2.eps_seed(key, variant, R, d, k, prior, cfg2)
-            r = e2.simulate(g, pool, C, cfg2, R, np.nan, d, k, seed)
+            if "final" in cfg2:
+                er = e2.final_eps_rel(cfg2, key, variant, g)
+                ers = e2.final_eps_rel(cfg2, key, variant, g, cfg["eps_signed_source"], "eps_rel_signed_ppb")
+                r = e2.simulate(g, pool, C, cfg2, R, np.nan, d, k, seed, eps_rel=er, eps_rel_signed=ers)
+            else:
+                r = e2.simulate(g, pool, C, cfg2, R, np.nan, d, k, seed)
             t = r["table"].merge(C[["mech", "family", "beta", "tax_t", "buf"]], on="mech")
             t.insert(0, "regime", rname); t.insert(0, "variant", variant); t.insert(0, "pool", key)
             t["R_usd"], t["hook_lag_min"], t["cadence_min"] = R, d, k
@@ -158,16 +171,20 @@ def run_tag(cfg, cfg2, split, d, k, regimes, cal, prior, tag):
 
 def check_as_frozen(summ: pd.DataFrame, tag: str) -> str:
     """The as-frozen rows must equal the E2 rows of the same tag."""
-    f = ROOT / "results" / "e2" / f"e2_summary_{tag}.parquet"
+    f = reporting.out_dir("e2") / f"e2_summary_{tag}.parquet"       # the same run root as E8's (RESULTS_RUN)
     if not f.exists():
         return "no E2 output for this tag"
     e2s = pd.read_parquet(f)
     a = summ[summ["family"] == "as_frozen"]
     m = a.merge(e2s, on=["pool", "variant", "regime", "mech", "lam", "gamma", "dmult", "phi"], suffixes=("", "_e2"))
+    missing = sorted(set(a["pool"]) - set(e2s["pool"]))
+    if missing:                                          # the final E2 delay grid covers ETH/USDC only
+        a = a[~a["pool"].isin(missing)]
     assert len(m) == len(a), f"{tag}: {len(a) - len(m)} as-frozen rows without an E2 counterpart"
     bad = [c for c in COMPARE if not np.array_equal(m[c].to_numpy(), m[c + "_e2"].to_numpy(), equal_nan=True)]
     assert not bad, f"{tag}: as-frozen rows differ from E2 in {bad}"
-    return f"{len(m)} as-frozen rows bit-identical to results/e2/e2_summary_{tag}.parquet"
+    return f"{len(m)} as-frozen rows bit-identical to {f.relative_to(ROOT).as_posix()}" + (
+        f"; no E2 rows for {', '.join(missing)} in this tag" if missing else "")
 
 
 def bootstrap(daily: pd.DataFrame, B: int, seed: int) -> pd.DataFrame:
@@ -203,7 +220,14 @@ def main():
     if a.calibrate:
         calibrate(cfg, cfg2)
         return
-    assert reporting.config_hash(cfg2) == reporting.frozen_path("e2").read_text().strip(), "E2 config is not the frozen one"
+    if "final" in cfg2:                                  # not frozen yet: validation only, gas checked against the gas config
+        if a.split != "valid" or a.freeze:
+            raise SystemExit("the final-rule E8 config runs on the validation months only until it is frozen")
+        gj = json.loads((ROOT / "config" / "gas_block_scope.json").read_text())["hook_overhead_gas"]
+        assert (cfg2["hook_overhead_gas"], cfg2["hook_overhead_gas_charged"], cfg2["hook_overhead_gas_charged_empty_vault"]) == (
+            gj["first_swap_of_block"], gj["charged_swap"], gj["charged_swap_empty_vault_sensitivity"])
+    else:
+        assert reporting.config_hash(cfg2) == reporting.frozen_path("e2").read_text().strip(), "E2 config is not the frozen one"
     hc = hashed_cfg(cfg, cfg2)
     if a.freeze:
         assert hc["beta_cal"] is not None, "run --calibrate first"

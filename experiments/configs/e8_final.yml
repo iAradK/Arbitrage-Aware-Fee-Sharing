@@ -1,0 +1,47 @@
+experiment: e8
+# Final-rule rerun (2026-10-08): E8 on the e2_final.yml traces, validation months only, RESULTS_RUN=final_valid.
+# Differences from e8.yml: the as-frozen rows are the final rule's (proportional net buffer, charged gas 52,161, g_hat
+# charged); `settle` is the settlement sensitivity with the empty-vault figure (69,261); the one-sided buffer is the
+# proportional buffer with the one-sided daily eps (eps_observed_signed_daily_valid.csv); the dynamic fee and the MEV tax
+# pay the uncharged hook gas (38,520) and no settlement.
+seed: 20260924
+# E8: baselines and sensitivities added after the E2 freeze (Phase 2 items 2.3 and 2.4). Re-simulates the frozen E2 replay
+# (experiments/e2_sequential_replay.simulate) with additional configurations on the same traces. Everything not set here
+# (gas, R regimes, rolling-buffer window, grid, eps quantile) is read from the frozen E2 config. E2's frozen configuration
+# and outputs are unchanged; the as-frozen rows of every E8 run must equal the E2 rows of the same tag bit for bit.
+e2_config: experiments/configs/e2_final.yml
+pools: [eth_usdc_005, eth_wbtc_030, eth_wsteth_001]
+variants: {eth_usdc_005: raw, eth_wbtc_030: corr24h, eth_wsteth_001: corr24h}   # primary variants of the paper
+headline: {lambda: 0.75, gamma: 0.02}
+# runs, as in E2: the ideal reference at k = 1 with all three reservation regimes, and the delay x cadence grid at the median
+ideal: {lag: 0, cadence: 1, regimes: [low, median, high]}
+delayed: {lags: [0, 1, 5], cadences: [1, 5, 15], regimes: [median]}
+
+# --- 2.3 as a sensitivity (the primary E2 numbers stay as frozen)
+# Settlement: a charged swap costs the hook overhead with settlement (61,807 gas, results/e7/gas_contract_8ca840a/
+# hook_gas_settled.csv) instead of the 30,214 of an uncharged swap, and the hook puts that amount into its K_hat (g_hat).
+# The arbitrage gas (150,000) is unchanged. Uncharged corrections still pay 150,000 + 30,214.
+final_settle: empty_vault          # settle family: charged swaps pay gas_units + hook_overhead_gas_charged_empty_vault
+eps_signed_source: eps_observed/eps_observed_signed_daily_valid.csv
+# One-sided buffer: delta = dmult x max(P95 of the signed error S_hat - S, 0) over the same rolling window and candidates as
+# E2's |S_hat - S|. With g_hat equal to the gas of a charged swap the hook's cost estimate is exact, so K - K_hat = 0 and the
+# combined error of Theorem 3, (S_hat - S) + (K - K_hat), reduces to S_hat - S.
+
+# --- 2.4 replayed baselines
+# MEV tax under competitive bidding: searchers bid their margin as priority fee, the tax takes t/(1+t) of S - C - R and
+# the builder the rest; the correction itself is the baseline's. t = 5.7 and 0.8 are the values at which the tax matches
+# the retained margin's share of the baseline margin (ideal reference, and d = 1, k = 15; paper Section 6).
+mev_tax_t: [0.8, 5.7]
+# Oracle-deviation dynamic fee: fee = pool fee + beta * |log(P_pool / P_hat)| from the pre-swap state, P_hat the hook's
+# reference (lagged by d like the rule's). LPs keep the whole fee; the excess over the pool fee is the recovered amount.
+# With beta >= 1 no correction is ever profitable ((1 - beta) |dev| > fee is impossible), so the grid stays below 1.
+dynfee_beta_grid: [0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9]
+# beta calibrated per pool on the validation months (ideal reference, k = 1, median R): the smallest beta whose recovered
+# total equals that of the retained margin (headline lambda, gamma). If no beta reaches it, the revenue-maximising beta.
+# The plan said training months. The replay had never been run on them, and there one day dominates: on 2025-07-09 the
+# measured in-range liquidity of ETH/USDC reached 3.26e9 (median 6.4e6) in a narrow range, the trailing depth carried it
+# to swaps that met far less (E1 / measured liquidity 274 at P90 that afternoon), and the retained margin "recovered"
+# 4.15 M of a 6.65 M USD nine-month target. April-May 2026 have no such minutes and are where every other tuned
+# parameter was chosen.
+dynfee_calibration: {split: valid, lag: 0, cadence: 1, regime: median, bisection_steps: 10}
+# both baselines pay the same gas as the as-frozen configurations (150,000 + 30,214), without settlement

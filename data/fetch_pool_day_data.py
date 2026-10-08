@@ -1,6 +1,6 @@
 """Daily fees, TVL and volume of the four pools for the test months (external review 1.1(d)).
 
-Queries the Uniswap v4 subgraph (Ethereum mainnet) on The Graph for poolDayDatas between 2026-07-01 and 2026-08-31
+Queries the Uniswap v4 subgraph (Ethereum mainnet) on The Graph for poolDayDatas between 2026-06-01 and 2026-07-26
 (62 UTC days), plus each pool's fee tier and hook address. The field names are first checked against the schema by
 introspection. Everything needed to reproduce the fetch is saved next to the raw responses: the fetch time, the
 subgraph ID, the endpoint with the key redacted and the exact query texts.
@@ -29,8 +29,8 @@ from common.pools import POOLS  # noqa: E402
 
 SUBGRAPH_ID = "DiYPVdygkfjDWhbxGSqAQxwBKmfKnkWQojqeM2rkLb3G"  # Uniswap v4, Ethereum mainnet (same as fetch_swaps.py)
 ENDPOINT = "https://gateway.thegraph.com/api/{key}/subgraphs/id/" + SUBGRAPH_ID
-START, END = "2026-07-01", "2026-09-01"                        # inclusive, exclusive (UTC days)
-OUT = ROOT / "data" / "data" / "subgraph" / "pool_day_data_jul_aug_2026.json"
+START, END = "2026-06-01", "2026-07-27"                        # inclusive, exclusive (UTC days): the test months of DECISIONS H3
+OUT = ROOT / "data" / "data" / "subgraph" / "pool_day_data_jun_jul_2026.json"
 
 DAY_FIELDS = ["date", "feesUSD", "tvlUSD", "volumeUSD", "txCount"]
 POOL_FIELDS = ["id", "feeTier", "hooks", "tickSpacing", "totalValueLockedUSD"]
@@ -61,7 +61,8 @@ def post(url: str, query: str) -> dict:
 
 
 def main():
-    key = os.environ.get("GRAPH_API_KEY", "").strip()
+    import secrets_local  # env var or data/.secrets.env
+    key = secrets_local.get("GRAPH_API_KEY")
     if not key:
         raise SystemExit("set GRAPH_API_KEY to your The Graph API key first (it is not stored anywhere)")
     url = ENDPOINT.format(key=key)

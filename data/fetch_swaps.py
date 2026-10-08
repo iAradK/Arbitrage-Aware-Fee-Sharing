@@ -21,7 +21,9 @@ from datetime import datetime, timezone
 
 import requests
 
-API_KEY = "ADD_YOUR_API_KEY_HERE"
+import secrets_local
+
+API_KEY = secrets_local.get("GRAPH_API_KEY") or "ADD_YOUR_API_KEY_HERE"  # env var or data/.secrets.env
 SUBGRAPH_ID = "DiYPVdygkfjDWhbxGSqAQxwBKmfKnkWQojqeM2rkLb3G"  # Uniswap v4, Ethereum mainnet
 ENDPOINT = f"https://gateway.thegraph.com/api/{API_KEY}/subgraphs/id/{SUBGRAPH_ID}"
 
@@ -173,27 +175,43 @@ def chunks(start, end):
     return out
 
 
-def merge_pool(label, pool_chunks):
-    """Concatenate a pool's chunk files (in time order) into one CSV."""
+def merge_pool(label):
+    """Merge every finished part file of the pool (all date ranges ever downloaded) into swaps_<label>.csv.
+
+    Part files are named <start>_<end>.csv with [start, end) ranges, so sorting by name gives chronological order.
+    Only parts whose .state.json says done are merged; an unfinished chunk aborts the merge.
+    """
     part_dir = os.path.join(OUT_DIR, label, "parts")
     out_path = os.path.join(OUT_DIR, f"swaps_{label}.csv")
+    parts = sorted(f for f in os.listdir(part_dir) if f.endswith(".csv"))
+    for name in parts:
+        state_path = os.path.join(part_dir, name[:-4] + ".state.json")
+        if not os.path.exists(state_path) or not json.load(open(state_path)).get("done"):
+            raise RuntimeError(f"[{label}] part {name} is not finished; not merging")
     total = 0
     with open(out_path, "w", newline="") as out:
         out.write(",".join(HEADER) + "\r\n")
-        for s, e in pool_chunks:
-            with open(os.path.join(part_dir, f"{fmt(s)}_{fmt(e)}.csv"), newline="") as f:
+        for name in parts:
+            with open(os.path.join(part_dir, name), newline="") as f:
                 next(f)  # skip header
                 for line in f:
                     out.write(line)
                     total += 1
-    log(f"[{label}] merged {total} swaps -> {out_path}")
+    log(f"[{label}] merged {total} swaps from {len(parts)} parts -> {out_path}")
 
 
 def main():
-    start, end = ts(START_DATE), ts(END_DATE)
+    import argparse
+    ap = argparse.ArgumentParser(description="Download Uniswap v4 swaps from The Graph into per-chunk part files and merge them.")
+    ap.add_argument("--start", default=START_DATE, help="inclusive UTC date of the chunks to download")
+    ap.add_argument("--end", default=END_DATE, help="exclusive UTC date of the chunks to download")
+    ap.add_argument("--pools", nargs="+", default=list(POOLS), choices=list(POOLS))
+    args = ap.parse_args()
+    pools = {k: POOLS[k] for k in args.pools}
+    start, end = ts(args.start), ts(args.end)
     pool_chunks = chunks(start, end)
-    tasks = [(label, pool, s, e) for label, pool in POOLS.items() for s, e in pool_chunks]
-    log(f"{len(tasks)} chunks across {len(POOLS)} pools, {MAX_WORKERS} workers")
+    tasks = [(label, pool, s, e) for label, pool in pools.items() for s, e in pool_chunks]
+    log(f"{len(tasks)} chunks across {len(pools)} pools, {MAX_WORKERS} workers, {args.start} -> {args.end}")
 
     failed = set()
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
@@ -206,11 +224,11 @@ def main():
                 failed.add(label)
                 log(f"[{label} {fmt(s)}_{fmt(e)}] FAILED: {err}")
 
-    for label in POOLS:
+    for label in pools:
         if label in failed:
             log(f"[{label}] has failed chunks; run the script again to finish them.")
         else:
-            merge_pool(label, pool_chunks)
+            merge_pool(label)
 
 
 if __name__ == "__main__":

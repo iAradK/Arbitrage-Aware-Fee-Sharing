@@ -215,7 +215,7 @@ def fetch_block_times(url, blocks, workers, batch=100):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rpc", default=os.environ.get("ETH_RPC_URL"))
+    ap.add_argument("--rpc", default=__import__("secrets_local").get("ETH_RPC_URL"))
     ap.add_argument("--address", default=PYTH_ETH_MAINNET)
     ap.add_argument("--feeds", nargs="+", default=["ETH_USD"],
                     help=f"names from {list(FEEDS)} or raw 0x feed ids")

@@ -18,6 +18,22 @@ script in this repository:
 | §5.3 / Fig 5 | Oracle-staleness robustness, Pyth vs Binance, 1–60 min delays | `experiments/oracle_staleness/run_stale_oracle_robustness.py` |
 | §5.4 / Table 1 | Solidity↔Python parity (128 cases), gas benchmarks, fragmentation resistance, real Uniswap v4-core hook fuzz testing and full-lifecycle hook gas cost (`G_hook`) | `contracts/src/*.sol`, `contracts/src/hooks/*.sol`, `contracts/python/*.py`, `contracts/test/hooks/ParticipationAwareHook.t.sol`, `contracts/test/hooks/HookGasBenchmark.t.sol` |
 
+## On-chain data sources (Ethereum mainnet)
+
+The paper's evaluation (Section 5 and Appendix B.1) uses these identifiers. Uniswap v4 pools are
+identified by their pool ID within the PoolManager contract
+`0x000000000004444c5dc75cB358380D2e3dE08A90` (see `common/pools.py`).
+
+| Source | Identifier |
+|---|---|
+| ETH/USDC 0.05% pool | `0x21c67e77068de97969ba93d4aab21826d33ca12bb9f565d8496e8fda8a82ca27` |
+| ETH/WBTC 0.30% pool | `0x54c72c46df32f2cc455e84e41e191b26ed73a29452cdd3d82f511097af9f427e` |
+| ETH/wstETH 0.01% pool | `0x1d5b2949ece8754c2d736991c62c5162bd144f497b2212182401b9bae77e2d76` |
+| USDC/USDT pool (collected, excluded, see `NOTES/2026-09-29_usdc_usdt_fee_tier.md`) | `0x8aa4e11cbdf30eedc92100f4c8a31ff748e201d44712cc8c90d189edaa8e4e47` |
+| Lido stETH contract (`TokenRebased` events, wstETH rate) | `0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84` |
+| Pyth contract | `0x4305FB66699C3B2702D4d05CF36551390A4c69C6` |
+| Pyth ETH/USD feed ID | `0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace` |
+
 ## Repository structure
 
 ```

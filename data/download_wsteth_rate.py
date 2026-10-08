@@ -193,7 +193,7 @@ def decode(log):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rpc", default=os.environ.get("ETH_RPC_URL"))
+    ap.add_argument("--rpc", default=__import__("secrets_local").get("ETH_RPC_URL"))
     ap.add_argument("--start", default="2025-09-01")
     ap.add_argument("--end", default=None, help="exclusive end date (default: now)")
     ap.add_argument("--pad-days", type=int, default=5,

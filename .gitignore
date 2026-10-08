@@ -64,3 +64,20 @@ data/.secrets.env
 
 # Claude Code session worktrees
 .claude/
+
+# Stray LaTeX build output (a dir literally named "C<U+F03A>")
+/C/
+
+# Local-only: superseded material, snapshots, logs
+archive/
+results_v*_snapshot/
+logs_*/
+
+# The paper is not part of the code release
+/*.pdf
+/hook_lifecycle.png
+/main-sigmetrics.tex
+/references.bib
+paper/*.tex
+paper/figures/
+paper/make_hook_lifecycle.py

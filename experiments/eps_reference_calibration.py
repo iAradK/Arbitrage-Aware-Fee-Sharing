@@ -217,7 +217,7 @@ def main():
     if a.split != "valid":
         raise SystemExit("validation-only: the test months are refused")
     t0 = time.time()
-    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / "tables").mkdir(parents=True, exist_ok=True)
     cfg2 = reporting.load_config(ROOT / "experiments" / "configs" / "e2.yml")
     pvs = e2_variants(cfg2)
     with ProcessPoolExecutor(a.workers) as ex:

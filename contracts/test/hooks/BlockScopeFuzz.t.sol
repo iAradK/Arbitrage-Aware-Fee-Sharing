@@ -169,7 +169,7 @@ contract BlockScopeFuzzTest is BlockScopedHookTestBase {
         cmd[4] = vm.toString(uint256(FINAL_GAMMA_BPS));
         cmd[5] = vm.toString(uint256(FINAL_GAS_UNITS));
         cmd[6] = vm.toString(uint256(FINAL_TAU_WEI));
-        cmd[7] = "0";
+        cmd[7] = vm.toString(uint256(hook.gasPriceToken0Wad()));
         cmd[8] = vm.toString(uint256(FINAL_EPS_PPB) * 1e9);
         for (uint256 i; i < n; ++i) {
             Rec memory rec = recs[i];

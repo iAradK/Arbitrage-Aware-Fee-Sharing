@@ -171,7 +171,7 @@ def edge_blocks_in_file(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rpc", default=os.environ.get("ETH_RPC_URL"))
+    ap.add_argument("--rpc", default=__import__("secrets_local").get("ETH_RPC_URL"))
     ap.add_argument("--start", help="UTC date YYYY-MM-DD")
     ap.add_argument("--end", help="UTC date YYYY-MM-DD (exclusive)")
     ap.add_argument("--start-block", type=int)

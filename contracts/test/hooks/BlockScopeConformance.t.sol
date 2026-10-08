@@ -15,7 +15,8 @@ import {DeltaManager} from "./DeltaManager.sol";
 import {TransientProbe} from "./BlockScopedHookTestBase.sol";
 
 /// @notice The 48 E7 multi-swap sequences (validation months) replayed through the final hook
-/// (block scope V1 with per-transaction clipping, relative proportional buffer) in three modes;
+/// (block scope V1 with per-transaction clipping, relative proportional buffer on each
+/// transaction's net token1 change) in three modes;
 /// every marginal charge is compared with ScopedHookReference(scope="block",
 /// accumulation="tx_clip", buffer="rel") via experiments/e7_v1_vectors.py ->
 /// contracts/test/hooks/vectors/vectors_v1.json (tracked):
@@ -83,6 +84,7 @@ contract BlockScopeConformanceTest is Test {
     function _fresh(Seq memory s, uint256 salt) internal returns (ParticipationAwareHook hook, PoolKey memory key) {
         ParticipationAwareHook.Params memory p;
         p.kHatConstant = s.kHat;
+        p.gasPriceToken0Wad = 1e18; // token0 = ETH (no gas term here: gasUnits = 0)
         p.lambdaBps = s.lambdaBps;
         p.gammaBps = s.gammaBps;
         p.stalenessThresholdSeconds = 3600;

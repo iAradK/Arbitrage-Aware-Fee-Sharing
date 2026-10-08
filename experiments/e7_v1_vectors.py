@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Conformance vectors for the final hook (block scope V1 with per-transaction clipping and the relative proportional
-buffer): the 48 E7 multi-swap sequences (validation months, results/e7/vectors.json) in three modes, expected marginal
+buffer on each transaction's net token1 change): the 48 E7 multi-swap sequences (validation months, results/e7/vectors.json) in three modes, expected marginal
 charges from common.fixedpoint.ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel"):
   a  all fragments in one transaction of one block
   b  every fragment its own transaction, all in one block
   c  every fragment its own transaction, over 2-4 consecutive blocks (contiguous groups, random cut points)
 The E7 fragments are numeraire values v; to exercise the buffer every fragment becomes a two-token swap
-(delta0, delta1) = (-2v, +3v) at a reference of 1.2 (so the product truncation also matters), with gross token1
-volume 3|v|. eps_rel = 2,830,000 ppb (0.283%), settlement in token0. Writes contracts/test/hooks/vectors/vectors_v1.json (tracked: BlockScopeConformanceTest reads it).
+(delta0, delta1) = (-2v, +3v) at a reference of 1.2 (so the product truncation also matters); the buffer of a
+transaction is on |3 sum v| over its fragments (volume="net", the default). eps_rel = 2,830,000 ppb (0.283%), settlement in token0. Writes contracts/test/hooks/vectors/vectors_v1.json (tracked: BlockScopeConformanceTest reads it).
 
   python experiments/e7_v1_vectors.py
 """
@@ -62,7 +62,7 @@ def main():
                     "expected_a": [str(x) for x in ea], "expected_b": [str(x) for x in eb], "expected_c": [str(x) for x in ec]})
     OUT.mkdir(parents=True, exist_ok=True)
     doc = {"source": "results/e7/vectors.json (sequences, validation months)", "seed": SEED, "reference_wad": str(REF),
-           "eps_rel_ppb": EPS_PPB, "accumulation": "tx_clip", "buffer": "rel", "n_sequences": len(out),
+           "eps_rel_ppb": EPS_PPB, "accumulation": "tx_clip", "buffer": "rel", "volume": "net", "n_sequences": len(out),
            "n_fragments": sum(x["n"] for x in out), "sequences": out}
     (OUT / "vectors_v1.json").write_text(json.dumps(doc, indent=1))
     diff = lambda a, b: sum(1 for x in out for p, q in zip(x[a], x[b]) if p != q)  # noqa: E731

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """FFI bridge for BlockScopeFuzz.t.sol and the tests using BlockScopedHookTestBase._refRun (final hook): replays a swap trace
-through common.fixedpoint.ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel") and prints, per swap, the
+through common.fixedpoint.ScopedHookReference(scope="block", accumulation="tx_clip", buffer="rel", volume="net") and prints, per swap, the
 expected (W increase, settlement token amount, block surplus A after the swap; 2^256 - 1 when no scope is open for
 the swap's block) as an ABI-encoded uint256[] (0x hex, as vm.ffi decodes).
 
@@ -23,7 +23,7 @@ def main(argv):
     rest = [int(x) for x in argv[7:]]
     assert len(rest) % 7 == 0, "trace must have 7 fields per swap"
     h = ScopedHookReference(k, 0, lam, gam, gas_units=gas, tau_wei=tau, gas_price_token0_wad=gp, scope="block",
-                            accumulation="tx_clip", buffer="rel", eps_wad=eps)
+                            accumulation="tx_clip", buffer="rel", eps_wad=eps, volume="net")
     out = []
     for i in range(0, len(rest), 7):
         block, tx, price, basefee, d0, d1, settle0 = rest[i:i + 7]

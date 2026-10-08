@@ -1,5 +1,6 @@
 """Proportional buffer of the integer reference (ScopedHookReference buffer="abs" / "rel"): each bracket deducts
-eps x its gross token1 volume instead of a fixed delta inside kappa."""
+eps x its absolute net token1 change (volume="net", the contract; "gross" = the S1 hook's gross token1 volume) instead
+of a fixed delta inside kappa."""
 import pytest
 from hypothesis import given, settings, strategies as st
 
@@ -63,13 +64,49 @@ def test_eps_is_locked_at_scope_open():
 
 
 def test_gross_volume_counts_both_directions():
-    """A round trip inside one transaction nets d1 to 0 but deducts eps on the gross volume of both legs."""
+    """volume="gross" (the S1 hook): a round trip inside one transaction nets d1 to 0 but deducts eps on the gross
+    volume of both legs."""
     eps = 5 * WAD                                 # 5 token0 units per token1 unit
-    h = h_("tx_clip", "abs", eps, k=0, lb=10_000, gb=0)
+    h = fp.ScopedHookReference(0, 0, 10_000, 0, accumulation="tx_clip", buffer="abs", eps_wad=eps, volume="gross")
     h.swap("p", 1, 0, 3000 * WAD, 10, REF)        # receives 10 token1 base units and 3000 WAD token0
     h.swap("p", 1, 0, -2000 * WAD, -10, REF)      # gives them back: net d1 = 0
     s = h.pools["p"]
     assert s["g"] == 20 and h.surplus("p") == 1000 * WAD - 5 * 20     # eps x gross volume, in token0 base units
+
+
+def test_net_volume_ignores_a_round_trip():
+    """volume="net" (the contract, the default): the same round trip deducts eps on the net change |d1| = 0."""
+    eps = 5 * WAD
+    h = h_("tx_clip", "abs", eps, k=0, lb=10_000, gb=0)
+    assert h.volume == "net"
+    h.swap("p", 1, 0, 3000 * WAD, 10, REF)
+    assert h.surplus("p") == 3000 * WAD + 10 * REF // WAD - 5 * 10
+    h.swap("p", 1, 0, -2000 * WAD, -10, REF)
+    assert h.surplus("p") == 1000 * WAD
+
+
+def test_bad_volume_rejected():
+    with pytest.raises(ValueError):
+        fp.ScopedHookReference(0, 0, 7500, 200, buffer="rel", volume="both")
+
+
+@given(x1=st.integers(1, 10**19), margin=st.integers(1, 2000), legs=st.lists(st.integers(-(10**20), 10**20), min_size=1,
+       max_size=4), at=st.integers(0, 8), eps=st.integers(0, 10**16), k=kappa, lb=lam_bps, gb=gam_bps,
+       buffer=st.sampled_from(["abs", "rel"]))
+@settings(max_examples=400)
+def test_wash_round_trip_inside_a_transaction_never_lowers_the_charge(x1, margin, legs, at, eps, k, lb, gb, buffer):
+    """volume="net": a correcting swap X plus round-trip legs (r, -r) inside the same transaction, in any order, pays
+    at least the charge of X alone (its bracket is X's, and the watermark keeps the peak of the intermediate ones)."""
+    x0 = -(x1 * REF // WAD) * (10_000 - margin) // 10_000            # receives x1 token1, pays less than its value
+    alone = h_("tx_clip", buffer, eps, k, lb, gb).swap("p", 1, 0, x0, x1, REF)
+    seq = []
+    for r1 in legs:
+        r0 = -(r1 * REF // WAD)                                      # a leg at the reference, undone exactly by -r
+        seq += [(r0, r1), (-r0, -r1)]
+    seq.insert(min(at, len(seq)), (x0, x1))
+    w = h_("tx_clip", buffer, eps, k, lb, gb)
+    washed = sum(w.swap("p", 1, 0, d0, d1, REF) for d0, d1 in seq)
+    assert washed >= alone
 
 
 @given(pieces=st.lists(st.tuples(st.integers(0, 10**6), st.integers(0, 10**6)), min_size=2, max_size=10),

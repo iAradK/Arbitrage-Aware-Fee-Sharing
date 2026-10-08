@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 from common import reporting  # noqa: E402
 from common.pools import CACHE  # noqa: E402
 
-TAG = "test"
+TAG = "test"                    # default; --tag valid for the validation reruns
 PRIMARY = {"eth_usdc_005": "raw", "eth_wbtc_030": "corr24h", "eth_wsteth_001": "corr24h"}   # USDC/USDT excluded (W8)
 MECHS = ["baseline", "static_0.05pct", "static_0.30pct", "unconstrained", "cap_gamma0", "retained"]
 LAM, GAM, B, SEED = 0.75, 0.02, 2000, 20260924
@@ -44,9 +44,13 @@ def pick(df: pd.DataFrame, pool: str, regime: str, mech: str) -> pd.DataFrame:
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--tag", default=TAG)
+    tag = ap.parse_args().tag
     out = reporting.out_dir("e2")
-    summ = pd.read_parquet(out / f"e2_summary_{TAG}.parquet")
-    daily = pd.read_parquet(out / f"e2_daily_{TAG}.parquet")
+    summ = pd.read_parquet(out / f"e2_summary_{tag}.parquet")
+    daily = pd.read_parquet(out / f"e2_daily_{tag}.parquet")
     rng = np.random.default_rng(SEED)
     rows = []
     for pool in PRIMARY:
@@ -88,10 +92,10 @@ def main():
     fmt = {c: "{:,.2f}" for c in res.columns if c.endswith("usd")}
     fmt.update({c: "{:.4f}" for c in ("execution_rate", "recovered_over_baseline_margin", "ci_lo", "ci_hi",
                                       "recovered_over_nominal", "recovered_over_own_margin")})
-    reporting.write_table(res, out / "tables" / f"e2_recoverable_margin_{TAG}", fmt)
+    reporting.write_table(res, out / "tables" / f"e2_recoverable_margin_{tag}", fmt)
     reporting.write_manifest("e2", {"analysis": "recoverable margin", "lam": LAM, "gamma": GAM, "B": B, "seed": SEED},
-                             [out / f"e2_summary_{TAG}.parquet", out / f"e2_daily_{TAG}.parquet"], "test",
-                             {"source_tag": TAG}, tag=f"recoverable_margin_{TAG}", latest=False)
+                             [out / f"e2_summary_{tag}.parquet", out / f"e2_daily_{tag}.parquet"], tag.split("_")[0],
+                             {"source_tag": tag}, tag=f"recoverable_margin_{tag}", latest=False)
     with pd.option_context("display.width", 250, "display.max_rows", 100):
         print("max relative gap between the retained margin's and the baseline's ex-post margin:",
               res.attrs["retained_same_path_max_rel_gap"])

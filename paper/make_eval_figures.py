@@ -47,8 +47,8 @@ MECH = {"baseline": ("Baseline AMM", OI["grey"], "", "o", "-"),
         "unconstrained": (r"Unconstrained $\lambda S$", OI["purple"], "xxxx", "^", "--"),
         "cap_gamma0": (r"Maximal cap ($\gamma=0$)", OI["sky"], "....", "D", ":"),
         "retained": ("Retained margin", OI["blue"], "", "o", "-"),
-        "buffered_1eps": (r"Buffered $\delta=\varepsilon_S$", OI["green"], "----", "s", "--"),
-        "buffered_2eps": (r"Buffered $\delta=2\varepsilon_S$", OI["yellow"], "||||", "^", ":"),
+        "buffered_1eps": (r"Buffered $\varepsilon$", OI["green"], "----", "s", "--"),
+        "buffered_2eps": (r"Buffered $2\varepsilon$", OI["yellow"], "||||", "^", ":"),
         # E8 baselines (results/e8): drawn only in the frontier panels of Fig. eval_replay
         "dynfee": (r"Dynamic fee ($\beta$ grid)", OI["black"], "", "X", "-.")}
 # pool -> (colour, marker, line style)
@@ -262,16 +262,16 @@ def fig_costs():
 
 
 def frag_panel(a):
-    """Independent-rule transfer relative to the cumulative rule against the number of fragments (panel (d) of eval_costs)."""
+    """Independent-rule transfer relative to the block-scoped rule against the number of fragments (panel (d) of eval_costs)."""
     c = pd.read_csv(R / "e6/tables/e6_checks_test.csv")
     for i, p in enumerate(MAIN_POOLS):
         g = c[(c.pool == p) & (c.variant == VARIANT[p])].sort_values("n_fragments")
         col, mk, ls = POOL_STYLE[p]
         a.plot(g.n_fragments, 100 * g.indep_over_cumulative_equal, marker=mk, ms=3, ls=ls, color=col, label=SHORT[p])
-    a.plot([1, 16], [100, 100], color="k", ls=(0, (6, 1.5, 1, 1.5, 1, 1.5)), lw=0.9, label="cumulative rule")
+    a.plot([1, 16], [100, 100], color="k", ls=(0, (6, 1.5, 1, 1.5, 1, 1.5)), lw=0.9, label="block-scoped rule")
     a.set_xscale("log", base=2); a.set_xticks([1, 2, 4, 8, 16]); a.set_xticklabels([1, 2, 4, 8, 16])
     a.set_yscale("log"); a.set_ylim(0.1, 150); a.set_yticks([0.1, 1, 10, 100]); a.set_yticklabels(["0.1", "1", "10", "100"])
-    a.set_xlabel("number of fragments $m$"); a.set_ylabel("independent-rule transfer\nrelative to cumulative (%)")
+    a.set_xlabel("number of fragments $m$"); a.set_ylabel("independent-rule transfer\nrelative to block-scoped (%)")
     a.legend(frameon=False, ncol=1, fontsize=5.5, loc="lower left", handlelength=2.0, labelspacing=0.2)
 
 

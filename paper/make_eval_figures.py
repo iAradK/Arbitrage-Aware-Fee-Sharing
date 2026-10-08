@@ -1,5 +1,5 @@
 """Figures of Section 5 (Evaluation) that replace tables. Run from the repository root:  python paper/make_eval_figures.py
-Every number is read from results/ (no hard-coded values except the measured gas overhead, see GAS_*). Output: paper/figures/*.pdf
+Every number is read from results/ (no hard-coded values). Output: paper/figures/*.pdf
 """
 import sys
 from pathlib import Path
@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib
 import matplotlib.patches as mpatches
 import matplotlib.ticker
+from matplotlib.legend_handler import HandlerTuple
 import numpy as np
 import pandas as pd
 
@@ -21,12 +22,12 @@ OUT.mkdir(parents=True, exist_ok=True)
 plotstyle.apply()
 plt.rcParams.update({"font.size": 8, "axes.titlesize": 8, "axes.labelsize": 8, "legend.fontsize": 7})
 
-# USDC/USDT is excluded (its fee tier is 0.001%, not the 0.01% of the model; NOTES/DECISIONS.md W8)
+# USDC/USDT is excluded (its fee tier is 0.001%, not the 0.01% of the model; results/DECISIONS.md W8)
 POOLS = ["eth_usdc_005", "eth_wbtc_030", "eth_wsteth_001"]
+MAIN_POOLS = ["eth_usdc_005", "eth_wbtc_030"]   # main-text figures (Figs. 2 and 5); ETH/wstETH stays in Fig. 6 and the appendix tables
 SHORT = {"eth_usdc_005": "ETH/USDC", "usdc_usdt_0001": "USDC/USDT", "eth_wbtc_030": "ETH/WBTC", "eth_wsteth_001": "ETH/wstETH"}
 VARIANT = {"eth_usdc_005": "raw", "usdc_usdt_0001": "raw", "eth_wbtc_030": "corr24h", "eth_wsteth_001": "corr24h"}
 C = plotstyle.COLORS
-GAS_FIRST, GAS_EXTRA = 30.214, 13.823  # thousand gas, current contract with settlement (results/e7/gas_contract_8ca840a/gas_profile.json, DECISIONS W12)
 
 # Okabe-Ito palette. Every series is also told apart by hatching (bars) or line style and marker (lines),
 # so the figures stay readable in grayscale print.
@@ -40,7 +41,9 @@ MECH = {"baseline": ("Baseline AMM", OI["grey"], "", "o", "-"),
         "cap_gamma0": (r"Maximal cap ($\gamma=0$)", OI["sky"], "....", "D", ":"),
         "retained": ("Retained margin", OI["blue"], "", "o", "-"),
         "buffered_1eps": (r"Buffered $\delta=\varepsilon_S$", OI["green"], "----", "s", "--"),
-        "buffered_2eps": (r"Buffered $\delta=2\varepsilon_S$", OI["yellow"], "||||", "^", ":")}
+        "buffered_2eps": (r"Buffered $\delta=2\varepsilon_S$", OI["yellow"], "||||", "^", ":"),
+        # E8 baselines (results/e8): drawn only in the frontier panels of Fig. eval_replay
+        "dynfee": (r"Dynamic fee ($\beta$ grid)", OI["black"], "", "X", "-.")}
 # pool -> (colour, marker, line style)
 POOL_STYLE = {"eth_usdc_005": (OI["blue"], "o", "-"), "usdc_usdt_0001": (OI["vermilion"], "s", "--"),
               "eth_wbtc_030": (OI["green"], "^", "-."), "eth_wsteth_001": (OI["purple"], "D", ":")}
@@ -60,43 +63,70 @@ def save(fig, name):
     plt.close(fig)
 
 
-# ---------------------------------------------------------------- Fig. 1: execution rate and price error (replaces Table replay)
+# ---------------------------------------------------------------- Fig. eval_replay: execution rate per pool and the recovery/price-error frontier
+def frontier_panel(ax, d, p, e8=None):
+    """Protection funds against mean price error as lambda varies, one pool. Static charges are single points. With `e8`
+    (E8 test summary, median R) also the dynamic fee over its beta grid (calibrated beta as an open marker)."""
+    style = {m: (MECH[m][0], MECH[m][1], MECH[m][3], MECH[m][4]) for m in ("static_0.05pct", "static_0.30pct", "unconstrained", "cap_gamma0", "retained")}
+    x = d[(d.pool == p) & (d.variant == VARIANT[p])]
+    b = x[x.mech == "baseline"].iloc[0]
+    ax.scatter([b.etw_mean], [b.protection_usd], color=MECH["baseline"][1], edgecolor="k", linewidth=0.4, marker="*", s=45, zorder=3,
+               label=MECH["baseline"][0])
+    for m, (lab, col, mk, ls) in style.items():
+        g = x[(x.mech == m) & (np.isclose(x.gamma, 0.02) if m == "retained" else True)].sort_values("lam")
+        if m.startswith("static"):
+            g = g.iloc[:1]
+        ax.plot(g.etw_mean, g.protection_usd, marker=mk, ms=3.5, ls=ls, lw=0.9 if len(g) > 1 else 0, color=col, mec="k", mew=0.3, label=lab)
+    if e8 is not None:                                   # replayed baselines (E8, same traces and regime)
+        y = e8[e8.pool == p]
+        g = y[y.mech.str.startswith("dynfee_b")].assign(beta=lambda z: z.mech.str[8:].astype(float)).sort_values("beta")
+        g = g[g.etw_mean <= 3 * b.etw_mean]              # the largest betas leave the pool far off the benchmark (appendix table)
+        lab, col, mk, ls = MECH["dynfee"][0], MECH["dynfee"][1], MECH["dynfee"][3], MECH["dynfee"][4]
+        ax.plot(g.etw_mean, g.protection_usd, marker=mk, ms=3.2, ls=ls, lw=0.8, color=col, mec="k", mew=0.3, label=lab)
+        cal = y[y.mech == "dynfee_cal"].iloc[0]
+        ax.scatter([cal.etw_mean], [cal.protection_usd], marker="o", s=38, facecolor="none", edgecolor=col, linewidth=0.9, zorder=4,
+                   label=r"dynamic fee (calibrated $\beta$)")
+        # the E8 MEV-tax rows are not drawn: under competitive bidding they only restate t/(1+t) of the baseline margin (DECISIONS I9)
+    ax.set_xscale("log"); ax.set_xlabel("mean price error $E_{TW}$")
+    ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+    ax.text(0.97, 0.04, SHORT[p], transform=ax.transAxes, ha="right", va="bottom", fontsize=7.5)
+
+
 def fig_replay():
     h = pd.read_csv(R / "e2/tables/e2_headline_test.csv")
-    t3 = pd.read_csv(R / "e3/tables/e3_totals_test.csv")
+    d = pd.read_csv(R / "e3/tables/e3_totals_test.csv")
+    d = d[d.regime == "median"]
     mechs = [(m, MECH[m][0]) for m in ("baseline", "static_0.05pct", "static_0.30pct", "unconstrained", "cap_gamma0", "retained")]
-    fig, (a, b, c) = plt.subplots(1, 3, figsize=(7.4, 2.6), gridspec_kw={"width_ratios": [2.0, 0.95, 0.95]})
+    fig, (a, b, c) = plt.subplots(1, 3, figsize=(7.4, 2.3), gridspec_kw={"width_ratios": [1.5, 1, 1]})
     w = 0.135
     for i, (m, lab) in enumerate(mechs):
-        v = [100 * h[(h.pool == p) & (h.variant == VARIANT[p]) & (h.mech == m)].execution_rate.iloc[0] for p in POOLS]
-        xs = np.arange(len(POOLS)) + (i - 2.5) * w
+        v = [100 * h[(h.pool == p) & (h.variant == VARIANT[p]) & (h.mech == m)].execution_rate.iloc[0] for p in MAIN_POOLS]
+        xs = np.arange(len(MAIN_POOLS)) + (i - 2.5) * w
         mbar(a, xs, v, w, m, label=lab)
         for x, y in zip(xs, v):
             a.text(x, y + 1.5, f"{y:.0f}" if y >= 10 else f"{y:.1f}", ha="center", va="bottom", fontsize=5.5, rotation=90)
-    a.set_xticks(range(len(POOLS))); a.set_xticklabels([SHORT[p].replace("/", "/"+chr(10)) for p in POOLS], fontsize=7)
+    a.set_xticks(range(len(MAIN_POOLS))); a.set_xticklabels([SHORT[p].replace("/", "/" + chr(10)) for p in MAIN_POOLS], fontsize=7)
     a.set_ylabel("baseline-feasible corrections\nthat are executed (%)"); a.set_ylim(0, 118); a.set_yticks([0, 25, 50, 75, 100])
-    h_, l_ = a.get_legend_handles_labels()
-    fig.legend(h_, l_, frameon=False, ncol=6, loc="upper center", bbox_to_anchor=(0.5, 1.08), columnspacing=0.9, handlelength=1.8,
-               handleheight=1.0, fontsize=6.3)
     a.set_title("(a)", loc="left")
-    e = h[(h.pool == "eth_usdc_005") & (h.variant == "raw")].set_index("mech").etw_mean
-    for i, (m, lab) in enumerate(mechs):
-        r = e[m] / e["baseline"]
-        mbar(b, i, r, 0.7, m); b.text(i, r + 0.05, f"{r:.2f}", ha="center", fontsize=5.5)
-    b.axhline(1, color="k", lw=0.8, ls="--")
-    b.set_xticks([]); b.set_ylabel("mean price error\nrelative to baseline AMM"); b.set_ylim(0, 3.3)
-    b.set_title("(b)", loc="left")
-    L = t3[(t3.pool == "eth_usdc_005") & (t3.variant == "raw") & (t3.regime == "median")]
-    for i, (m, lab) in enumerate(mechs):
-        r = L[(L.mech == m) & ((L.lam == 0.75) | m.startswith("static") | (m == "baseline"))]
-        if m == "retained":
-            r = r[np.isclose(r.gamma, 0.02)]
-        v = r.mean_lp_vs_hodl_bp.iloc[0]
-        mbar(c, i, v, 0.7, m); c.text(i, v - 0.0002, f"{v:.4f}", ha="center", va="top", fontsize=5, rotation=90)
-    c.axhline(0, color="k", lw=0.8)
-    c.set_xticks([]); c.set_ylabel("per-step LP excess over HODL\n(bp per baseline-feasible step)"); c.set_ylim(-0.0047, 0.0003)
-    c.set_title("(c)", loc="left")
+    e8 = pd.read_parquet(R / "e8/e8_summary_test.parquet")
+    e8 = e8[e8.regime == "median"]
+    frontier_panel(b, d, "eth_usdc_005", e8); b.set_title("(b)", loc="left"); b.set_ylabel("funds available for\nLP protection (USD)")
+    frontier_panel(c, d, "eth_wbtc_030", e8); c.set_title("(c)", loc="left"); c.set_ylabel("funds available for\nLP protection (USD)")
+    # One shared legend for (a)-(c). Each rule shows its bar in (a) next to its marker and line in (b, c): a line for the
+    # curves over lambda (and over beta for the dynamic fee), a marker alone for the single points (static charges, baseline).
+    # (b) and (c) carry the same series, so their handles are taken from (b) only. Column-major order groups the entries:
+    # baseline and unconstrained | static charges | participation-aware rules | dynamic fee.
+    ha = dict(zip(*a.get_legend_handles_labels()[::-1]))
+    hb = dict(zip(*b.get_legend_handles_labels()[::-1]))
+    order = ["baseline", "unconstrained", "static_0.05pct", "static_0.30pct", "cap_gamma0", "retained"]
+    h_ = [(ha[MECH[m][0]], hb[MECH[m][0]]) for m in order] + [hb[MECH["dynfee"][0]], hb[r"dynamic fee (calibrated $\beta$)"]]
+    l_ = [MECH[m][0] for m in order] + [MECH["dynfee"][0], r"dynamic fee (calibrated $\beta$)"]
+    fig.legend(h_, l_, frameon=False, ncol=4, loc="upper center", bbox_to_anchor=(0.5, 1.13), columnspacing=0.9, handlelength=2.6,
+               handleheight=1.0, fontsize=6.3, handler_map={tuple: HandlerTuple(ndivide=None, pad=0.3)})
     fig.tight_layout()
+    fig.canvas.draw()
+    plotstyle.ensure_all_xticks(fig)  # at least two labelled, non-overlapping x ticks per panel (log axes in b and c)
     save(fig, "eval_replay")
 
 
@@ -115,7 +145,7 @@ def fig_lag():
         d = pd.read_csv(tab / f)
         return d[(d.pool == "eth_usdc_005") & (d.variant == "raw") & (d.mech == m) & (d.metric == metric)].point.iloc[0]
 
-    fig, (a, b) = plt.subplots(1, 2, figsize=(7.2, 2.4))
+    fig, (a, b) = plt.subplots(1, 2, figsize=(7.2, 2.15))
     w = 0.2
     for i, (m, lab) in enumerate(mechs):
         x = np.arange(len(cfgs)) + (i - 1.5) * w
@@ -154,11 +184,11 @@ def fig_heat():
                     g[i, j] = 100 * r[col].iloc[0]
         return g
 
-    panels = [("(a)", grid("0", "violation_rate"), "Reds", 0, 40),
-              ("(b)", grid("eps_S", "violation_rate"), "Reds", 0, 40),
-              ("(c)", grid("eps_S", "recapture_effective"), "Blues", 0, 70)]
-    fig, axs = plt.subplots(1, 3, figsize=(7.4, 2.2))
-    for ax, (t, g, cm, lo, hi) in zip(axs, panels):
+    panels = [("(a)", grid("0", "violation_rate"), "Reds", 0, 40, "participation violations (%)"),
+              ("(b)", grid("eps_S", "violation_rate"), "Reds", 0, 40, "participation violations (%)"),
+              ("(c)", grid("eps_S", "recapture_effective"), "Blues", 0, 70, "effective recapture (%)")]
+    fig, axs = plt.subplots(1, 3, figsize=(7.4, 2.05))
+    for ax, (t, g, cm, lo, hi, clab) in zip(axs, panels):
         im = ax.imshow(g, cmap=cm, vmin=lo, vmax=hi, aspect="auto")
         for i in range(len(ks)):
             for j in range(len(ds)):
@@ -171,8 +201,10 @@ def fig_heat():
         ax.set_yticks(range(len(ks))); ax.set_yticklabels([f"{int(k)}" for k in ks])
         ax.set_xlabel("reference delay $d$ (min)"); ax.grid(False)
         ax.set_title(t, loc="left", fontsize=7.5)
-        plt.colorbar(im, ax=ax, fraction=0.05, pad=0.02).ax.tick_params(labelsize=6)
-    axs[0].set_ylabel("cadence $k$ (min)")
+        cb = plt.colorbar(im, ax=ax, fraction=0.05, pad=0.02)
+        cb.ax.tick_params(labelsize=6)
+        cb.set_label(clab, fontsize=6.5)
+        ax.set_ylabel("cadence $k$ (min)")       # on every panel, so no panel relies on its neighbour's axis title
     fig.tight_layout()
     save(fig, "eval_heat")
 
@@ -180,7 +212,7 @@ def fig_heat():
 # ---------------------------------------------------------------- Fig. 5: size-dependent costs (replaces Table costs)
 def fig_costs():
     d = pd.read_parquet(R / "e5/e5_summary.parquet")
-    d = d[(d.gas_units == 150000) & (d.bps_rank == 1) & np.isclose(d.curvature, 0.5) & d.pool.isin(POOLS)]
+    d = d[(d.gas_units == 150000) & (d.bps_rank == 1) & np.isclose(d.curvature, 0.5) & d.pool.isin(MAIN_POOLS)]
     est = [("gas_only", "gas-only", OI["vermilion"], "--", "s", "////"),
            ("gas_only_buf", r"gas-only, $\delta=\varepsilon_K$", OI["green"], ":", "^", "\\\\"),
            ("exact", "exact", OI["blue"], "-", "o", "")]
@@ -194,41 +226,32 @@ def fig_costs():
             ax.fill_between(piv.index, piv.min(axis=1), piv.max(axis=1), facecolor="none", edgecolor=col, hatch=hatch, lw=0, alpha=0.5)
             ax.plot(piv.index, piv["eth_usdc_005"], color=col, ls=ls, marker=mk, ms=3, label=lab)
 
-    fig, axs = plt.subplots(1, 3, figsize=(7.4, 2.3))
+    fig, axs = plt.subplots(1, 4, figsize=(7.4, 2.0))
     band(axs[0], "lam", ("gamma", 0.02), "q_ratio_mean"); axs[0].set_xlabel(r"sharing rate $\lambda$"); axs[0].set_ylabel(r"trade selection $q^{BR}/q^0$")
-    band(axs[1], "gamma", ("lam", 0.75), "q_ratio_mean"); axs[1].set_xlabel(r"retained fraction $\gamma$")
+    band(axs[1], "gamma", ("lam", 0.75), "q_ratio_mean"); axs[1].set_xlabel(r"retained fraction $\gamma$"); axs[1].set_ylabel(r"trade selection $q^{BR}/q^0$")
     band(axs[2], "lam", ("gamma", 0.02), "execution_rate"); axs[2].set_xlabel(r"sharing rate $\lambda$"); axs[2].set_ylabel("execution rate")
-    for ax, t in zip(axs, ["(a)", "(b)", "(c)"]):
-        ax.set_ylim(0, 1.05); ax.set_title(t, loc="left", fontsize=8)
-    axs[0].legend(frameon=False, loc="lower left", handlelength=2.2)
+    for ax, t in zip(axs, ["(a)", "(b)", "(c)", "(d)"]):
+        ax.set_title(t, loc="left", fontsize=8)
+    for ax in axs[:3]:
+        ax.set_ylim(0, 1.05)
+    axs[0].legend(frameon=False, loc="lower left", handlelength=2.2, fontsize=6)
+    frag_panel(axs[3])
     fig.tight_layout()
     save(fig, "eval_costs")
 
 
-# ---------------------------------------------------------------- Fig. 6: fragmentation leakage vs gas (replaces Table frag)
-def fig_frag():
+def frag_panel(a):
+    """Independent-rule transfer relative to the cumulative rule against the number of fragments (panel (d) of eval_costs)."""
     c = pd.read_csv(R / "e6/tables/e6_checks_test.csv")
-    fig, (a, b) = plt.subplots(1, 2, figsize=(7.2, 2.3), gridspec_kw={"width_ratios": [1.6, 1]})
-    for i, p in enumerate(POOLS):
+    for i, p in enumerate(MAIN_POOLS):
         g = c[(c.pool == p) & (c.variant == VARIANT[p])].sort_values("n_fragments")
         col, mk, ls = POOL_STYLE[p]
         a.plot(g.n_fragments, 100 * g.indep_over_cumulative_equal, marker=mk, ms=3, ls=ls, color=col, label=SHORT[p])
-    a.axhline(0.0, color="k", lw=0)
-    a.plot([1, 16], [100, 100], color="k", ls=(0, (6, 1.5, 1, 1.5, 1, 1.5)), lw=0.9, label="cumulative rule (all $n$)")
+    a.plot([1, 16], [100, 100], color="k", ls=(0, (6, 1.5, 1, 1.5, 1, 1.5)), lw=0.9, label="cumulative rule")
     a.set_xscale("log", base=2); a.set_xticks([1, 2, 4, 8, 16]); a.set_xticklabels([1, 2, 4, 8, 16])
-    a.set_yscale("log"); a.set_ylim(0.4, 150); a.set_yticks([1, 10, 100]); a.set_yticklabels(["1", "10", "100"])
-    a.set_xlabel("number of fragments $n$"); a.set_ylabel("independent-rule transfer\nrelative to cumulative (%)")
-    a.legend(frameon=False, ncol=2, fontsize=6.5, loc="lower left", handlelength=2.2)
-    a.set_title("(a)", loc="left", fontsize=8)
-    ns = [1, 2, 4, 8, 16]
-    gas = [GAS_FIRST + GAS_EXTRA * (n - 1) for n in ns]
-    b.bar(range(5), gas, 0.65, color=OI["grey"], **BAR_EDGE)
-    for i, gv in enumerate(gas):
-        b.text(i, gv + 4, f"{gv:.0f}k", ha="center", fontsize=6)
-    b.set_xticks(range(5)); b.set_xticklabels(ns); b.set_xlabel("number of fragments $n$"); b.set_ylabel("hook overhead (k gas)")
-    b.set_title("(b)", loc="left", fontsize=8)
-    fig.tight_layout()
-    save(fig, "eval_frag")
+    a.set_yscale("log"); a.set_ylim(0.1, 150); a.set_yticks([0.1, 1, 10, 100]); a.set_yticklabels(["0.1", "1", "10", "100"])
+    a.set_xlabel("number of fragments $m$"); a.set_ylabel("independent-rule transfer\nrelative to cumulative (%)")
+    a.legend(frameon=False, ncol=1, fontsize=5.5, loc="lower left", handlelength=2.0, labelspacing=0.2)
 
 
 # ---------------------------------------------------------------- Appendix: sensitivity to lambda and gamma
@@ -267,37 +290,7 @@ def fig_sens():
     save(fig, "eval_sens")
 
 
-# ---------------------------------------------------------------- Frontier: protection funds against price error as lambda varies
-def fig_frontier():
-    d = pd.read_csv(R / "e3/tables/e3_totals_test.csv")
-    d = d[d.regime == "median"]
-    style = {m: (MECH[m][0], MECH[m][1], MECH[m][3], MECH[m][4]) for m in ("static_0.05pct", "static_0.30pct", "unconstrained", "cap_gamma0")}
-    style["retained"] = (r"Retained margin ($\gamma=0.02$)", MECH["retained"][1], MECH["retained"][3], MECH["retained"][4])
-    fig, axs = plt.subplots(1, len(POOLS), figsize=(7.4, 2.4))
-    for ax, p in zip(axs, POOLS):
-        x = d[(d.pool == p) & (d.variant == VARIANT[p])]
-        X, Y = x.etw_mean.to_numpy(), x.protection_usd.to_numpy()
-        b = x[x.mech == "baseline"].iloc[0]
-        ax.scatter([b.etw_mean], [b.protection_usd], color="k", marker="*", s=30, zorder=3, label="Baseline AMM")
-        for m, (lab, col, mk, ls) in style.items():
-            g = x[(x.mech == m) & (np.isclose(x.gamma, 0.02) if m == "retained" else True)].sort_values("lam")
-            if m.startswith("static"):
-                g = g.iloc[:1]
-            ax.plot(g.etw_mean, g.protection_usd, marker=mk, ms=3.5, ls=ls, lw=0.9 if len(g) > 1 else 0, color=col, mec="k", mew=0.3,
-                    label=lab)
-        ax.set_xscale("log"); ax.set_title(SHORT[p], fontsize=8); ax.set_xlabel("mean price error $E_{TW}$")
-        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-        ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
-    axs[0].set_ylabel("funds available for\nLP protection (USD)")
-    h_, l_ = axs[0].get_legend_handles_labels()
-    fig.legend(h_, l_, frameon=False, ncol=6, loc="upper center", bbox_to_anchor=(0.5, 1.09), columnspacing=0.8, handlelength=2.0, fontsize=6)
-    fig.tight_layout()
-    fig.canvas.draw()
-    plotstyle.ensure_all_xticks(fig)  # at least two labelled, non-overlapping x ticks per panel (log axes)
-    save(fig, "eval_frontier")
-
-
 if __name__ == "__main__":
-    for f in (fig_replay, fig_lag, fig_heat, fig_costs, fig_frag, fig_sens, fig_frontier):
+    for f in (fig_replay, fig_lag, fig_heat, fig_costs, fig_sens):
         f()
         print("ok", f.__name__)

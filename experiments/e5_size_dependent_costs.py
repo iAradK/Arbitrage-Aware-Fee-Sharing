@@ -98,7 +98,7 @@ def main():
             tab = tab[(tab["pool"] == key) & (tab["variant"] == cfg["variant"])]
             ppb = pd.Series(tab["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(tab["day"])).tz_localize(None))
             day = pd.DatetimeIndex(sc["t"]).tz_convert(None).floor("D")
-            eps_rel = ppb.reindex(day).to_numpy()
+            eps_rel = ppb.reindex(day).to_numpy() / 1e9           # ppb -> fraction
             assert np.isfinite(eps_rel).all(), f"{key}: scenario days without a training eps"
             Sb = np.maximum(S - eps_rel[:, None] * np.abs(tr["d1"]) * usd, 0.0)
         else:

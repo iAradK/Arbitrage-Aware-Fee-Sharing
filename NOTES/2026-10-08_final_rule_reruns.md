@@ -83,3 +83,60 @@ Replays keep K̂ = K (gas at the block's actual price, ĝ = the charged gas). τ
   - Splitting across transactions in one block never pays less than unsplit by more than rounding (at most 21 wei); on average it pays 1.1% to 11% more, because each transaction's bracket is clipped separately.
   - Splitting within one transaction never pays less, and pays more for 40–65 of 1,042 ETH/USDC opportunities, because the watermark keeps an intermediate peak.
 - Contracts: all Foundry suites pass on the merged tree (P-net NOTES §3); the new fragment gas test passes, 13 / 13.
+
+## Rerun with eps per reference (results/final_valid_eps)
+
+| Commit | Step |
+|---|---|
+| 23a77b0 | test configuration ĝ = 202,161 (`FINAL_GAS_UNITS`); every block-scope suite passes in its supported mode (logs in `results/e7_block_scope/logs_23a77b0`); conformance 0/0/0 mismatches in the three modes; the 2,000-run fuzz passes isolated and not isolated; cold gas unchanged |
+| 46f0cc2, b6ae752 | `experiments/eps_reference_calibration.py` (run on b6ae752) |
+| e24a07a | every final-rule experiment uses the eps of its own reference; all reruns on this commit |
+| 646c168 | comparison: per-reference eps, the d = 0 check, E4 fitted-once per d, Pyth rows |
+
+**Per-reference eps.**
+- **Error:** |P / P̂ − 1| at observed price-correcting swaps (the stored file used |P̂ / P − 1|; the two differ at order ε²). Rolling 7-day p95, daily at 00:00 UTC, strictly earlier data, rounded up to whole ppb.
+- **One-sided:** max(p95 of sign(d0)·(1 − P/P̂), 0).
+- **Checks:**
+  - lag 0 gives 0 every day, two-sided and one-sided;
+  - lag 1 under the old definition reproduces all 549 pool-days of `eps_observed_daily_valid.csv`.
+
+Median daily eps for ETH/USDC (fitted once in brackets):
+
+| Reference | Median daily eps (fitted once) |
+|---|---|
+| lag 1 | 15.0 bp (15.6) |
+| lag 5 | 32.8 bp (35.5) |
+| lag 10 | 45.8 bp (51.0) |
+| lag 30 | 81.8 bp (88.1) |
+| lag 60 | 111.3 bp (125.4) |
+| Pyth, no check | 73.3 bp |
+| Pyth, 60 s | 10.9 bp |
+| Pyth, 300 s | 27.5 bp |
+| Pyth, 1 h | 59.8 bp |
+
+- **ETH/WBTC:** 13.2–13.5 bp at lag 1, 30–32 bp at lag 5, about 85 bp at lag 60.
+- **ETH/wstETH:** 0 at every lag.
+- **Coverage on observed correcting swaps:** 94–96% for every reference.
+- **Coverage on replay candidates:**
+
+| Cadence | Coverage (lags 1–60) |
+|---|---|
+| k = 15 | 94.5–96.8% |
+| k = 5 | 90.8–93.9% |
+| k = 1 | 80.5–91.4% |
+
+  The k = 1 candidates follow large one-minute moves.
+- The one-sided eps is 0 for ETH/WBTC at lags ≥ 5. Correcting swaps follow recent moves, so a lagged reference underestimates their surplus.
+
+**Which reference each experiment uses:**
+
+| Experiment | Reference |
+|---|---|
+| E2, E8 | lag d of each run |
+| E4 | lag d; Pyth per staleness bound and without one; fitted-once per reference |
+| E5, E6, the cross-block split | the exact reference (eps = 0) |
+| B.10 threshold | lag 5 (`delta_from_e4_lag_min`) |
+
+**d = 0 check.** At d = 0 every buffered row equals the retained margin's in every metric: 18 rule/variant combinations, each with 48 rows (all regimes, λ and γ), in all three pools.
+
+Comparison tables: `results/final_valid_eps/comparison/*.csv`; `file_list.csv` gives each file's commit (eps_reference: b6ae752; everything else: e24a07a).

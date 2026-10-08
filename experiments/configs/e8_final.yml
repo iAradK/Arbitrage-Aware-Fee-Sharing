@@ -22,7 +22,8 @@ delayed: {lags: [0, 1, 5], cadences: [1, 5, 15], regimes: [median]}
 # hook_gas_settled.csv) instead of the 30,214 of an uncharged swap, and the hook puts that amount into its K_hat (g_hat).
 # The arbitrage gas (150,000) is unchanged. Uncharged corrections still pay 150,000 + 30,214.
 final_settle: empty_vault          # settle family: charged swaps pay gas_units + hook_overhead_gas_charged_empty_vault
-eps_signed_source: eps_reference/eps_ref_daily_valid.csv   # one-sided column eps_rel_signed_ppb, per reference
+skip_families: [onesided]          # the one-sided buffer is not run on the test months (2026-10-08)
+eps_signed_source: eps_reference/eps_ref_daily_{split}.csv   # one-sided column eps_rel_signed_ppb, per reference
 # One-sided buffer: delta = dmult x max(P95 of the signed error S_hat - S, 0) over the same rolling window and candidates as
 # E2's |S_hat - S|. With g_hat equal to the gas of a charged swap the hook's cost estimate is exact, so K - K_hat = 0 and the
 # combined error of Theorem 3, (S_hat - S) + (K - K_hat), reduces to S_hat - S.

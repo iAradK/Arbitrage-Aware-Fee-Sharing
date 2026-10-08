@@ -68,6 +68,34 @@ def guard_split(exp: str, split: str, confirm_frozen: bool, cfg: dict) -> None:
         raise SystemExit("config changed since it was frozen; test split refused")
 
 
+FINAL_FROZEN_DIR = REPO / "config" / "frozen" / "final"       # the final rule's frozen configs (NOTES/FREEZE.md)
+
+
+def guard_final(exp: str, split: str, confirm_frozen: bool, cfg: dict) -> None:
+    """Final-rule configs: the validation months run freely; the test months need --confirm-frozen and a config hash
+    equal to config/frozen/final/<exp>.sha256 (written by experiments/freeze_final.py)."""
+    if split != "test":
+        return
+    if not confirm_frozen:
+        raise SystemExit("--split test requires --confirm-frozen")
+    f = FINAL_FROZEN_DIR / f"{exp}.sha256"
+    if not f.exists():
+        raise SystemExit(f"{f} missing: freeze the final configs (experiments/freeze_final.py) before the test months")
+    if f.read_text().strip() != config_hash(cfg):
+        raise SystemExit(f"{exp}: config changed since it was frozen; test split refused")
+
+
+def load_eps_table(source: str) -> pd.DataFrame:
+    """A daily eps table under the run root. A source with "{split}" is the union of its validation and test files
+    (disjoint days; the test file exists once the frozen calibration has continued over the test months)."""
+    if "{split}" not in source:
+        return pd.read_csv(run_root() / source)
+    parts = [run_root() / source.format(split=s) for s in ("valid", "test")]
+    parts = [p for p in parts if p.exists()]
+    assert parts, f"no eps table for {source} under {run_root()}"
+    return pd.concat([pd.read_csv(p) for p in parts], ignore_index=True)
+
+
 def freeze(exp: str, cfg: dict) -> None:
     FROZEN_DIR.mkdir(parents=True, exist_ok=True)
     frozen_path(exp).write_text(config_hash(cfg))

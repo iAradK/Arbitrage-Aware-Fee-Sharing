@@ -201,6 +201,60 @@ def replay_coverage(args) -> list:
     return out
 
 
+def calibrate_test(args) -> dict:
+    """The frozen daily rule continued over the test months: each test day's eps from the correcting swaps of the 7
+    days strictly before it (the last 8 validation days seed the first test days). Observed-swap coverage only."""
+    key, var, cfg2, with_pyth = args
+    pyth = load_pyth() if with_pyth else None
+    refs = references(key, var, pyth)
+    te, va = swaps(key, var, "test", refs), swaps(key, var, "valid", refs)
+    W = np.timedelta64(int((cfg2["eps_window_days"] + 1) * 86400e9), "ns")
+    va = va[va["t"] >= va["t"].max() - W]
+    days = np.unique(day_starts(te["t"].to_numpy()))
+    day_rows, cov_rows = [], []
+    for ref in refs:
+        e, s, _, valid = errors(te, ref)
+        es, ss, _, vs = errors(va, ref)
+        okt, oks = valid & te["correcting"].to_numpy(), vs & va["correcting"].to_numpy()
+        t_t, t_s = te["t"].to_numpy(), va["t"].to_numpy()
+        ppb, v = daily(t_t, e, okt, t_s[oks], es[oks], days, cfg2)
+        ppb_s, _ = daily(t_t, s, okt, t_s[oks], ss[oks], days, cfg2, floor0=True)
+        day_rows.append(pd.DataFrame({"pool": key, "variant": var, "reference": ref, "day": days, "eps_rel_ppb": ppb,
+                                      "eps_rel_signed_ppb": ppb_s, "eps_rel_unrounded": v}))
+        idx = np.searchsorted(days, day_starts(t_t))
+        eps_at = ppb[np.clip(idx, 0, len(days) - 1)] / 1e9
+        for qname, m in (("observed swaps (valid reference)", valid), ("observed price-correcting swaps", okt)):
+            cov_rows.append({"pool": key, "variant": var, "reference": ref, "query_set": qname, "n": int(m.sum()),
+                             "eps_median_bp": float(np.median(eps_at[m])) * 1e4 if m.any() else np.nan,
+                             "coverage": float(np.mean(e[m] <= eps_at[m])) if m.any() else np.nan})
+    return {"days": pd.concat(day_rows, ignore_index=True), "cov": cov_rows}
+
+
+def main_test(workers: int) -> None:
+    t0 = time.time()
+    (OUT / "tables").mkdir(parents=True, exist_ok=True)
+    cfg2 = reporting.load_config(ROOT / "experiments" / "configs" / "e2.yml")
+    pvs = e2_variants(cfg2)
+    with ProcessPoolExecutor(workers) as ex:
+        res = list(ex.map(calibrate_test, [(k, v, cfg2, (k, v) == ("eth_usdc_005", "raw")) for k, v in pvs]))
+    days = pd.concat([x["days"] for x in res], ignore_index=True)
+    cov = pd.DataFrame([r for x in res for r in x["cov"]])
+    days.to_csv(OUT / "eps_ref_daily_test.csv", index=False)
+    cov.to_csv(OUT / "eps_ref_coverage_test.csv", index=False)
+    z = days[days.reference == "lag0"]
+    ok0 = bool((z["eps_rel_ppb"] == 0).all() and (z["eps_rel_signed_ppb"] == 0).all())
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, capture_output=True, text=True).stdout.splitlines()
+    mf = {"experiment": "eps_reference", "split": "test", "git_commit": head + ("+dirty" if dirty else ""), "uncommitted": dirty,
+          "parameters": {"rule": "frozen daily rule continued over the test months", "seed": "last 8 validation days"},
+          "checks": [{"check": "lag0 gives eps = 0 every test day", "ok": ok0}],
+          "outputs": {p.name: sha(p) for p in sorted(OUT.glob("eps_ref_*_test.csv"))}}
+    (OUT / "manifest_test.json").write_text(json.dumps(mf, indent=1, default=str))
+    print(days.groupby(["pool", "variant", "reference"])["eps_rel_ppb"].median().to_string())
+    assert ok0, "lag0 is not 0"
+    print(f"done in {time.time() - t0:.0f}s")
+
+
 def sha(p: Path) -> str:
     h = hashlib.sha256()
     with open(p, "rb") as f:
@@ -213,9 +267,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", choices=["valid", "test"], default="valid")
     ap.add_argument("--workers", type=int, default=9)
+    ap.add_argument("--confirm-frozen", action="store_true")
     a = ap.parse_args()
-    if a.split != "valid":
-        raise SystemExit("validation-only: the test months are refused")
+    if a.split == "test":
+        if not a.confirm_frozen:
+            raise SystemExit("--split test requires --confirm-frozen")
+        return main_test(a.workers)
     t0 = time.time()
     (OUT / "tables").mkdir(parents=True, exist_ok=True)
     cfg2 = reporting.load_config(ROOT / "experiments" / "configs" / "e2.yml")

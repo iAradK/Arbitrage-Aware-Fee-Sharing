@@ -291,8 +291,8 @@ def final_eps_rel(cfg: dict, pool_key: str, variant: str, g: pd.DataFrame, sourc
     """eps_rel in force at each minute of the grid: the daily whole-ppb observed-swap calibration of the pool variant
     (`source` relative to the run root, default cfg["final"]["eps_source"]; `col` the ppb column). A per-reference file
     (column `reference`, eps_reference_calibration.py) needs `reference`, e.g. "lag1" for the benchmark delayed 1 minute."""
-    f = reporting.run_root() / (source or cfg["final"]["eps_source"])
-    tab = pd.read_csv(f)
+    f = source or cfg["final"]["eps_source"]
+    tab = reporting.load_eps_table(f)
     tab = tab[(tab["pool"] == pool_key) & (tab["variant"] == variant)]
     if "reference" in tab:
         assert reference is not None, f"{f} is per reference: name one"
@@ -349,12 +349,13 @@ def main():
         reporting.freeze("e2", cfg)
         print("config frozen:", reporting.config_hash(cfg)[:12])
         return
-    reporting.guard_split("e2", a.split, a.confirm_frozen, cfg)
+    if "final" not in cfg:
+        reporting.guard_split("e2", a.split, a.confirm_frozen, cfg)
     d = a.lag if a.lag is not None else cfg["hook_lag_min"]
     gas_units = cfg["gas_units"] + cfg["hook_overhead_gas"]
     final = "final" in cfg
-    if final and a.split != "valid":
-        raise SystemExit("the final-rule config runs on the validation months only until it is frozen")
+    if final:                                            # test months: --confirm-frozen and the frozen final config
+        reporting.guard_final("e2", a.split, a.confirm_frozen, cfg)
     if final:                                            # the config's gas must be the gas config's measured figures
         import json
         gj = json.loads((ROOT / "config" / "gas_block_scope.json").read_text())["hook_overhead_gas"]
@@ -418,7 +419,9 @@ def main():
     ins = [CACHE / "aligned" / f"{kk}.parquet" for kk in keys]
     extra = {"hook_lag_min": d, "cadence_min": k, "gas_units": gas_units, "eps_mode": cfg["eps_mode"]}
     if final:
-        ins += [reporting.run_root() / cfg["final"]["eps_source"], ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
+        ins += [reporting.run_root() / cfg["final"]["eps_source"].format(split=s) for s in ("valid", "test")
+                if (reporting.run_root() / cfg["final"]["eps_source"].format(split=s)).exists()]
+        ins += [ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
         extra.update({"config": Path(a.config).name, "final": cfg["final"], "hook_gas_uncharged": cfg["hook_overhead_gas"],
                       "hook_gas_charged": cfg["hook_overhead_gas_charged"], "results_run": reporting.RESULTS_RUN})
     reporting.write_manifest("e2", cfg, ins, a.split, extra, tag=tag)

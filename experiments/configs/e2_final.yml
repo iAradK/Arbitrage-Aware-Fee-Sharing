@@ -43,7 +43,7 @@ final:
   # eps_rel: the daily calibration of the replay's own reference (experiments/eps_reference_calibration.py): at 00:00
   # UTC the rolling 7-day p95 of |P / P_hat - 1| over observed price-correcting swaps, P_hat the benchmark delayed by the
   # replay's lag d, ceil to whole ppb (lag 0: eps = 0, so the buffered rules equal the retained margin).
-  eps_source: eps_reference/eps_ref_daily_valid.csv
+  eps_source: eps_reference/eps_ref_daily_{split}.csv
   settlement: charged        # charged corrections pay hook_overhead_gas_charged ("empty_vault": the sensitivity)
   k_hat: true_cost           # replays keep K_hat = K (gas at the block's actual gas price + R); tau_hat enters only
                              # where K_hat is estimated (E4, B.10)

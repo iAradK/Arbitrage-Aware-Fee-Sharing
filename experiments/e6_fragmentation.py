@@ -182,8 +182,7 @@ def main():
         print("config frozen:", reporting.config_hash(cfg)[:12])
         return
     if "final" in cfg:                                   # not frozen yet: validation months only
-        if a.split != "valid":
-            raise SystemExit("the final-rule E6 config runs on the validation months only until it is frozen")
+        reporting.guard_final("e6", a.split, a.confirm_frozen, cfg)
     else:
         reporting.guard_split("e6", a.split, a.confirm_frozen, cfg)
     rng = np.random.default_rng(cfg["seed"])
@@ -196,7 +195,7 @@ def main():
         g_first, g_extra = fin["gas_first_call"], fin["gas_per_extra_fragment"]
         gas_src = "final block-scoped hook (BlockScopedHookFragmentGasTest, config/gas_block_scope.json)"
         lam_bps, gam_bps = int(round(cfg["lam"] * 1e4)), int(round(cfg["gamma"] * 1e4))
-        epst = pd.read_csv(reporting.run_root() / fin["eps_source"])
+        epst = reporting.load_eps_table(fin["eps_source"])
     elif gp.exists():
         prof = json.load(open(gp))
         g_first, g_extra = prof["first_call_gas"], prof["extra_fragment_gas"]
@@ -323,7 +322,7 @@ def main():
     reporting.write_table(gt, out / "tables" / f"e6_gas_penalty_{tag}", {"cumulative_gas_k": "{:.1f}", "penalty_vs_n1_pct": "{:.1f}"})
     ins = [CACHE / "aligned" / f"{k}.parquet" for k in cfg["pools"]]
     if fin is not None:
-        ins += [reporting.run_root() / fin["eps_source"], ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
+        ins += [ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
     reporting.write_manifest("e6", cfg, ins, a.split, {"gas_source": gas_src, "results_run": reporting.RESULTS_RUN})
     tot = res[["mono_exact_fail", "opt_exact_fail", "rev_max_fail", "rev_negative_charge", "cor1_fail"]].sum()
     print("VIOLATION COUNTS (expected 0):", tot.to_dict())

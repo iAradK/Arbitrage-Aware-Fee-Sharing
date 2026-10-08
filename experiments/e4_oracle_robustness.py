@@ -166,7 +166,7 @@ def evaluate_final(c, sh, eps_rel, eta, delta_kind, lam, gam, fail_open, final) 
 def final_eps(cfg: dict, key: str, variant: str, t, reference: str = "lag1") -> np.ndarray:
     """eps_rel in force at each candidate time: the daily whole-ppb calibration of the hook's reference (lag<d>, pyth,
     pyth_amax<A>)."""
-    tab = pd.read_csv(reporting.run_root() / cfg["final"]["eps_source"])
+    tab = reporting.load_eps_table(cfg["final"]["eps_source"])
     tab = tab[(tab["pool"] == key) & (tab["variant"] == variant)]
     if "reference" in tab:
         tab = tab[tab["reference"] == reference]
@@ -212,8 +212,7 @@ def main():
         return
     fin = None
     if "final" in cfg:                                   # not frozen yet: validation months only
-        if a.split != "valid":
-            raise SystemExit("the final-rule E4 config runs on the validation months only until it is frozen")
+        reporting.guard_final("e4", a.split, a.confirm_frozen, cfg)
         fin = {"tau_hat_wei": float(cfg["final"]["tau_hat_wei"]), "g_hat": float(cfg["gas_units"] + cfg["hook_overhead_gas_charged"])}
     else:
         reporting.guard_split("e4", a.split, a.confirm_frozen, cfg)
@@ -355,7 +354,9 @@ def main():
     figs(summ, out, tag, cfg)
     ins = [CACHE / "aligned" / f"{k}.parquet" for k in keys]
     if fin is not None:
-        ins += [reporting.run_root() / cfg["final"]["eps_source"], ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
+        ins += [reporting.run_root() / cfg["final"]["eps_source"].format(split=s) for s in ("valid", "test")
+                if (reporting.run_root() / cfg["final"]["eps_source"].format(split=s)).exists()]
+        ins += [ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
     reporting.write_manifest("e4", cfg, ins, a.split, {"final": cfg.get("final"), "results_run": reporting.RESULTS_RUN})
     with pd.option_context("display.width", 250, "display.max_columns", 30):
         print(pd.DataFrame(notes).to_string(index=False))

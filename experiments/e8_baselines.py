@@ -85,6 +85,9 @@ def configs(cfg: dict, cfg2: dict, beta_cal: float | None) -> pd.DataFrame:
     betas = [(f"dynfee_b{b:g}", float(b)) for b in cfg["dynfee_beta_grid"]] + ([("dynfee_cal", float(beta_cal))] if beta_cal is not None else [])
     dyn = pd.concat([proto.assign(mech=m, kind=e2.DYNFEE, beta=b) for m, b in betas]).assign(family="dynfee")
     C = pd.concat([base, settle, one, mev, dyn], ignore_index=True)
+    skip = set(cfg.get("skip_families", []))
+    if skip:                                             # e8_final.yml: the one-sided buffer is not run on the test months
+        C = C[~C["family"].isin(skip)].reset_index(drop=True)
     assert C["mech"].is_unique
     return C
 
@@ -220,21 +223,24 @@ def main():
     if a.calibrate:
         calibrate(cfg, cfg2)
         return
-    if "final" in cfg2:                                  # not frozen yet: validation only, gas checked against the gas config
-        if a.split != "valid" or a.freeze:
-            raise SystemExit("the final-rule E8 config runs on the validation months only until it is frozen")
+    if "final" in cfg2:                                  # gas checked against the gas config; test: the frozen final config
+        if a.freeze:
+            raise SystemExit("freeze the final configs with experiments/freeze_final.py")
         gj = json.loads((ROOT / "config" / "gas_block_scope.json").read_text())["hook_overhead_gas"]
         assert (cfg2["hook_overhead_gas"], cfg2["hook_overhead_gas_charged"], cfg2["hook_overhead_gas_charged_empty_vault"]) == (
             gj["first_swap_of_block"], gj["charged_swap"], gj["charged_swap_empty_vault_sensitivity"])
     else:
         assert reporting.config_hash(cfg2) == reporting.frozen_path("e2").read_text().strip(), "E2 config is not the frozen one"
     hc = hashed_cfg(cfg, cfg2)
+    if "final" in cfg2:
+        reporting.guard_final("e8", a.split, a.confirm_frozen, hc)
     if a.freeze:
         assert hc["beta_cal"] is not None, "run --calibrate first"
         reporting.freeze("e8", hc)
         print("config frozen:", reporting.config_hash(hc)[:12])
         return
-    reporting.guard_split("e8", a.split, a.confirm_frozen, hc)
+    if "final" not in cfg2:
+        reporting.guard_split("e8", a.split, a.confirm_frozen, hc)
     cal = json.loads(cal_path().read_text())["pools"] if cal_path().exists() else None
     prior = e2.PRIOR[a.split]
     runs = [(cfg["ideal"]["lag"], cfg["ideal"]["cadence"], cfg["ideal"]["regimes"], a.split)]

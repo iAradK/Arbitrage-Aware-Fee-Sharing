@@ -196,7 +196,7 @@ def smin(cfg: dict, out: Path, split: str) -> None:
     df = pd.DataFrame({"month": ts.strftime("%Y-%m"), "a": a_usd, "a_actual": a_actual_usd}).dropna()
     eps_path = RESULTS / "e4" / "tables" / "e4_eps_valid.csv"
     eps_tab = pd.read_csv(eps_path) if (eps_path.exists() and fin is None) else None
-    eps_day = pd.read_csv(reporting.run_root() / fin["eps_source"]) if fin is not None else None
+    eps_day = reporting.load_eps_table(fin["eps_source"]) if fin is not None else None
     rows, shares, gasq = [], [], []
     import e6_fragmentation as e6
     e6cfg = reporting.load_config(ROOT / (fin["e6_config"] if fin is not None else "experiments/configs/e6.yml"))
@@ -301,9 +301,8 @@ def main():
         reporting.freeze("e7", cfg)
         return
     split = a.split or cfg["smin_share_split"]
-    if a.smin and "final" in cfg:                                    # not frozen yet: validation months only
-        if split != "valid":
-            raise SystemExit("the final-rule E7 config runs on the validation months only until it is frozen")
+    if a.smin and "final" in cfg:                                    # test months: --confirm-frozen and the frozen config
+        reporting.guard_final("e7", split, a.confirm_frozen, cfg)
     elif a.smin:
         reporting.guard_split("e7", split, a.confirm_frozen, cfg)
     if a.vectors:

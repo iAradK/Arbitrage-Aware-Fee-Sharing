@@ -81,3 +81,11 @@ logs_*/
 paper/*.tex
 paper/figures/
 paper/make_hook_lifecycle.py
+
+# Not part of the public code release (kept locally)
+data/data/
+results/
+paper/
+audit/
+NOTES/
+CHANGELOG_revision.md

@@ -64,7 +64,8 @@ def make_configs(cfg: dict) -> pd.DataFrame:
 
 
 def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, eps_usd: float, d: int,
-             k: int = 1, eps_seed: pd.DataFrame | None = None, eps_rel: np.ndarray | None = None) -> dict:
+             k: int = 1, eps_seed: pd.DataFrame | None = None, eps_rel: np.ndarray | None = None,
+             eps_rel_signed: np.ndarray | None = None) -> dict:
     """Vectorised over configurations; sequential over minutes. The searcher acts every k minutes. If eps_seed is given
     (columns t, err_usd: baseline candidates of the preceding split), eps_S is rolling: at each step the P95 of |S_hat - S|
     over baseline candidates (seed plus this run's config 0) in the trailing eps_window_days, strictly earlier.
@@ -76,7 +77,8 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
       ghat    gas amount in the hook's K_hat; default `gas`
       buf     "abs" (P95 of |S_hat - S|, E2) or "signed" (one-sided: P95 of S_hat - S, floored at 0); default "abs";
               "prop" (final rule): no delta; the hook's surplus is the buffered bracket
-              [S_hat - dmult * eps_rel[t] * |net token1 change|]^+ (eps_rel: one value per minute, the daily calibration)
+              [S_hat - dmult * eps_rel[t] * |net token1 change|]^+ (eps_rel: one value per minute, the daily calibration);
+              "prop1s" (E8): the same with the one-sided eps_rel_signed (P95 of the direction-signed relative error)
       beta    DYNFEE: fee = pool fee + beta * |log(P_pool / P_hat)|, set from the pre-swap state; LPs keep the excess fee
       tax_t   MEVTAX: competing searchers bid their margin, so the tax takes t/(1+t) of S - C - R"""
     T, nC, G = len(g), len(C), cfg["grid_points"]
@@ -89,8 +91,10 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
     gas_ch = C["gas_ch"].to_numpy(dtype=float) if "gas_ch" in C else gas_u
     gas_hat = C["ghat"].to_numpy(dtype=float) if "ghat" in C else gas_u
     signed = (C["buf"].to_numpy() == "signed") if "buf" in C else np.zeros(nC, dtype=bool)
-    prop = (C["buf"].to_numpy() == "prop") if "buf" in C else np.zeros(nC, dtype=bool)
-    assert not prop.any() or (eps_rel is not None and len(eps_rel) == len(g)), "buf = prop needs eps_rel per minute"
+    prop1s = (C["buf"].to_numpy() == "prop1s") if "buf" in C else np.zeros(nC, dtype=bool)
+    prop = ((C["buf"].to_numpy() == "prop") if "buf" in C else np.zeros(nC, dtype=bool)) | prop1s
+    assert not (prop & ~prop1s).any() or (eps_rel is not None and len(eps_rel) == len(g)), "buf = prop needs eps_rel per minute"
+    assert not prop1s.any() or (eps_rel_signed is not None and len(eps_rel_signed) == len(g)), "buf = prop1s needs eps_rel_signed"
     beta = C["beta"].to_numpy(dtype=float) if "beta" in C else np.zeros(nC)
     tax_t = C["tax_t"].to_numpy(dtype=float) if "tax_t" in C else np.zeros(nC)
     has_dyn = bool((kind == DYNFEE).any())
@@ -195,7 +199,8 @@ def simulate(g: pd.DataFrame, pool, C: pd.DataFrame, cfg: dict, R_usd: float, ep
         Kh = (mg.gas_cost_num(gas_a[i], en_a[i], gas_hat) + R) if ext_gas else K      # the hook's K_hat
         if prop.any():                                   # final rule: the buffer is inside the bracket, delta = 0
             pr = prop[ix, None]
-            Sh_r = np.where(pr, np.maximum(Sh - dm[ix, None] * eps_rel[i] * np.abs(tr["d1"]), 0.0), Sh)
+            e_row = np.where(prop1s[ix], eps_rel_signed[i] if prop1s.any() else 0.0, eps_rel[i] if (prop & ~prop1s).any() else 0.0)
+            Sh_r = np.where(pr, np.maximum(Sh - dm[ix, None] * e_row[:, None] * np.abs(tr["d1"]), 0.0), Sh)
             delta = np.where(pr, 0.0, delta)
         else:
             Sh_r = Sh
@@ -281,13 +286,15 @@ def final_configs(cfg: dict, settlement: str | None = None) -> pd.DataFrame:
     return C
 
 
-def final_eps_rel(cfg: dict, pool_key: str, variant: str, g: pd.DataFrame) -> np.ndarray:
-    """eps_rel in force at each minute of the grid: the daily whole-ppb observed-swap calibration of the pool variant."""
-    f = reporting.run_root() / cfg["final"]["eps_source"]
+def final_eps_rel(cfg: dict, pool_key: str, variant: str, g: pd.DataFrame, source: str | None = None,
+                  col: str = "eps_rel_ppb") -> np.ndarray:
+    """eps_rel in force at each minute of the grid: the daily whole-ppb observed-swap calibration of the pool variant
+    (`source` relative to the run root, default cfg["final"]["eps_source"]; `col` the ppb column)."""
+    f = reporting.run_root() / (source or cfg["final"]["eps_source"])
     tab = pd.read_csv(f)
     tab = tab[(tab["pool"] == pool_key) & (tab["variant"] == variant)]
     assert len(tab), f"no daily eps for {pool_key} {variant} in {f}"
-    ppb = pd.Series(tab["eps_rel_ppb"].to_numpy(np.int64), index=pd.DatetimeIndex(pd.to_datetime(tab["day"])).tz_localize(None))
+    ppb = pd.Series(tab[col].to_numpy(np.int64), index=pd.DatetimeIndex(pd.to_datetime(tab["day"])).tz_localize(None))
     day = pd.DatetimeIndex(g["t"]).tz_convert(None).floor("D")
     v = ppb.reindex(day).to_numpy(dtype=float)
     assert np.isfinite(v).all(), f"days without a daily eps for {pool_key} {variant}"

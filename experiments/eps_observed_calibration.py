@@ -28,7 +28,8 @@ Checks: the k1 per-query series equals the stored Q4 eps series (results/eQ4, re
 executed corrections equals the stored Q4 cross-block opportunities' eps; the daily value is whole ppb and never
 uses an error stamped at or after its day's 00:00 UTC.
 
-  python experiments/eps_observed_calibration.py [--workers W] [--variants eC|e2]
+  python experiments/eps_observed_calibration.py [--workers W] [--variants eC|e2] [--split valid|train]
+(--split train writes only the daily tables of the training months, for E5; the test months are refused.)
 (RESULTS_RUN=<name> writes to results/<name>/eps_observed instead of results/eps_observed.)
 """
 from __future__ import annotations
@@ -74,10 +75,13 @@ def observed(key: str, var: str, split: str) -> pd.DataFrame:
     ok = np.isfinite(P) & np.isfinite(Ph) & (P > 0) & (Ph > 0) & np.isfinite(pre) & np.isfinite(post)
     with np.errstate(invalid="ignore", divide="ignore"):
         err = np.abs(Ph / P - 1)
+        # direction-signed error: S_hat - S = (P_hat - P) * d0, d0 the trader's token0 (ETH) change = -amount0
+        err_signed = -np.sign(al["amount0"].to_numpy(float)) * (Ph / P - 1)
         move, gap = np.sign(post - pre), np.sign(P - pre)
     corr = ok & (move != 0) & (gap != 0) & (move == gap)
     closer = corr & (np.abs(post - P) < np.abs(pre - P))
-    return pd.DataFrame({"t": q4.naive_ns(al["timestamp"]), "err": np.where(ok, err, np.nan), "valid_ref": ok,
+    return pd.DataFrame({"t": q4.naive_ns(al["timestamp"]), "err": np.where(ok, err, np.nan),
+                         "err_signed": np.where(ok, err_signed, np.nan), "valid_ref": ok,
                          "correcting": corr, "ends_closer": closer, "arb": al["arb"].to_numpy(bool),
                          "block": al["block"].to_numpy(), "log_index": al["log_index"].to_numpy()})
 
@@ -163,6 +167,7 @@ def one(args) -> dict:
                          "err_p50_bp": float(np.median(e)) * 1e4, "err_p95_bp": float(np.quantile(e, 0.95)) * 1e4})
     # the day table an admin would set
     _, days = daily(*obs_hist, va["t"].to_numpy(), cfg2)
+    days_s = signed_days(va, sd, cfg2, key, var)
     wins = []
     ht = np.concatenate([sd["t"].to_numpy(), va.loc[va["correcting"], "t"].to_numpy()])
     for d in days["day"].to_numpy():
@@ -206,7 +211,34 @@ def one(args) -> dict:
                     for win, p in ((_window(ht, np.concatenate([sd["err"].to_numpy(), va.loc[va["correcting"], "err"].to_numpy()]),
                                             d, cfg2), p) for d, p in zip(days["day"].to_numpy(), ppb)) if len(win) >= 20))})
     print(f"{key} {var}: {time.time() - t0:.0f}s", flush=True)
-    return {"rows": rows, "days": days, "counts": counts, "checks": chk}
+    return {"rows": rows, "days": days, "days_signed": days_s, "counts": counts, "checks": chk}
+
+
+def signed_days(va: pd.DataFrame, sd: pd.DataFrame, cfg2: dict, key: str, var: str) -> pd.DataFrame:
+    """One-sided daily eps (E8): ceil-ppb of max(P95 of the direction-signed relative error, 0) over the observed
+    price-correcting swaps, same window, history and seed as the two-sided value."""
+    hist = (va["t"].to_numpy(), va["err_signed"].to_numpy(), va["correcting"].to_numpy(), sd["t"].to_numpy(),
+            sd["err_signed"].to_numpy())
+    days = np.unique(day_starts(va["t"].to_numpy()))
+    v = q4.rolling_q(*hist, days, cfg2)
+    return pd.DataFrame({"pool": key, "variant": var, "day": days, "eps_rel_signed_ppb": np.ceil(np.maximum(v, 0.0) * 1e9).astype(np.int64),
+                         "eps_rel_signed_unrounded": v})
+
+
+def one_train(args) -> dict:
+    """--split train: only the daily tables (two-sided and one-sided) of the training months, for E5. No earlier split
+    exists, so there is no seed: the first days use all history (0 without any)."""
+    key, var, cfg2 = args
+    tr = observed(key, var, "train")
+    empty_t, empty_e = np.array([], dtype="datetime64[ns]"), np.array([], dtype=float)
+    hist = (tr["t"].to_numpy(), tr["err"].to_numpy(), tr["correcting"].to_numpy(), empty_t, empty_e)
+    _, days = daily(*hist, tr["t"].to_numpy(), cfg2)
+    days.insert(0, "variant", var)
+    days.insert(0, "pool", key)
+    days_s = signed_days(tr, tr.iloc[0:0], cfg2, key, var)
+    counts = {"pool": key, "variant": var, "n_swaps_train": len(tr), "n_valid_reference": int(tr["valid_ref"].sum()),
+              "n_price_correcting": int(tr["correcting"].sum())}
+    return {"days": days, "days_signed": days_s, "counts": counts}
 
 
 def _window(ht, he, d, cfg2):
@@ -225,18 +257,35 @@ def sha(p: Path) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--split", choices=["valid", "test"], default="valid")
+    ap.add_argument("--split", choices=["valid", "train", "test"], default="valid")
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--variants", choices=["eC", "e2"], default="eC", help="eC: the three Experiment C pool variants; "
                     "e2: every E2 pool variant (adds ETH/WBTC corr6h, corr7d and the four ETH/wstETH variants)")
     a = ap.parse_args()
     pvs = POOL_VARIANTS if a.variants == "eC" else e2_pool_variants()
-    if a.split != "valid":
-        raise SystemExit("validation-only: the test months are refused")
+    if a.split == "test":
+        raise SystemExit("the test months are refused")
     t0 = time.time()
     OUT.mkdir(parents=True, exist_ok=True)
     cfg2 = reporting.load_config(ROOT / "experiments" / "configs" / "e2.yml")
     lam, gam = cfg2["headline"]["lambda"], cfg2["headline"]["gamma"]
+    if a.split == "train":                               # daily tables only (E5 runs on the training months)
+        with ProcessPoolExecutor(a.workers) as ex:
+            res = list(ex.map(one_train, [(k, v, cfg2) for k, v in pvs]))
+        pd.concat([x["days"] for x in res], ignore_index=True).to_csv(OUT / "eps_observed_daily_train.csv", index=False)
+        pd.concat([x["days_signed"] for x in res], ignore_index=True).to_csv(OUT / "eps_observed_signed_daily_train.csv", index=False)
+        pd.DataFrame([x["counts"] for x in res]).to_csv(OUT / "eps_observed_counts_train.csv", index=False)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, capture_output=True,
+                               text=True).stdout.splitlines()
+        mf = {"experiment": "eps_observed", "split": "train", "git_commit": head + ("+dirty" if dirty else ""), "uncommitted": dirty,
+              "parameters": {"pool_variants": pvs, "seed": "none (no earlier split)", "eps_window_days": cfg2["eps_window_days"],
+                             "eps_quantile": cfg2["eps_quantile"]},
+              "outputs": {p.name: sha(p) for p in sorted(OUT.glob("eps_observed_*_train.csv"))}}
+        (OUT / "manifest_train.json").write_text(json.dumps(mf, indent=1, default=str))
+        print(pd.concat([x["days"] for x in res]).groupby(["pool", "variant"])["eps_rel_ppb"].median().to_string())
+        print(f"done in {time.time() - t0:.0f}s")
+        return
     with ProcessPoolExecutor(a.workers) as ex:
         res = list(ex.map(one, [(k, v, cfg2, lam, gam) for k, v in pvs]))
     summ = pd.DataFrame([r for x in res for r in x["rows"]])
@@ -245,6 +294,7 @@ def main():
     checks = pd.DataFrame([c for x in res for c in x["checks"]])
     summ.to_csv(OUT / "eps_observed_summary_valid.csv", index=False)
     days.to_csv(OUT / "eps_observed_daily_valid.csv", index=False)
+    pd.concat([x["days_signed"] for x in res], ignore_index=True).to_csv(OUT / "eps_observed_signed_daily_valid.csv", index=False)
     counts.to_csv(OUT / "eps_observed_counts_valid.csv", index=False)
     checks.to_csv(OUT / "eps_observed_checks_valid.csv", index=False)
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()

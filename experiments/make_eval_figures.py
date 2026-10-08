@@ -1,12 +1,12 @@
-"""Figures of Section 5 (Evaluation) that replace tables. Run from the repository root:  python paper/make_eval_figures.py
-Every number is read from results/ (no hard-coded values). Output: paper/figures/*.pdf
+"""Figures of Section 5 (Evaluation) that replace tables. Run from the repository root:  python experiments/make_eval_figures.py
+Every number is read from results/ (no hard-coded values). Output: results/figures/*.pdf
 
   --run NAME      read results/NAME/ (a RESULTS_RUN root) instead of results/
   --results DIR   base results directory (default: <repo>/results)
-  --out DIR       output directory (default: paper/figures)
+  --out DIR       output directory (default: results/figures)
   --figs a,b      only these figures (eval_replay, eval_lag, eval_heat, eval_costs, eval_sens)
 When e3/tables/e3_totals_test.csv is absent (a run root has no E3), its lambda x gamma rows are taken from
-e2/e2_summary_test.parquet: the median-regime rows and E3's columns (experiments/e3_pareto_frontier.py writes the same).
+e2/e2_summary_test.parquet: the median-regime rows and E3's columns.
 """
 import argparse
 import sys
@@ -25,7 +25,7 @@ from common import plotstyle  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
 R = ROOT / "results"
-OUT = ROOT / "paper" / "figures"
+OUT = ROOT / "results" / "figures"
 plotstyle.apply()
 plt.rcParams.update({"font.size": 8, "axes.titlesize": 8, "axes.labelsize": 8, "legend.fontsize": 7})
 

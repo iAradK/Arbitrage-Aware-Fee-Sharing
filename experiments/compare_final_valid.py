@@ -160,12 +160,28 @@ def e4():
             if len(a) and len(b):
                 pair(rows, f"Pyth A_max={A}s {cond} eps buffer violation_rate", a.iloc[0]["violation_rate"], b.iloc[0]["violation_rate"], abs_tol=0.005)
                 pair(rows, f"Pyth A_max={A}s {cond} eps buffer recapture_effective", a.iloc[0]["recapture_effective"], b.iloc[0]["recapture_effective"])
-    for cal in ("valid (in-sample)",):
-        sel = lambda x: x[(x.pool == "eth_usdc_005") & (x.scenario == "lag1_k15") & (x.calibration == cal) & np.isclose(x.eta, 0) & (x.delta == "eps_S")]
-        a, b = sel(o), sel(n)
-        if len(a) and len(b):
-            pair(rows, "ETH/USDC k=15 d=1 eps fitted once on validation: violation_rate", a.iloc[0]["violation_rate"], b.iloc[0]["violation_rate"], abs_tol=0.005)
-            pair(rows, "ETH/USDC k=15 d=1 eps fitted once on validation: recapture_effective", a.iloc[0]["recapture_effective"], b.iloc[0]["recapture_effective"])
+    for k in (1, 15):                                   # eps fitted once on validation, per d
+        for d in (1, 5, 10, 30, 60):
+            sel = lambda x: x[(x.pool == "eth_usdc_005") & (x.variant == "raw") & (x.scenario == f"lag{d}" + ("" if k == 1 else f"_k{k}"))
+                              & (x.calibration == "valid (in-sample)") & np.isclose(x.eta, 0) & (x.delta == "eps_S")]
+            a, b = sel(o), sel(n)
+            if len(a) and len(b):
+                pair(rows, f"ETH/USDC k={k} d={d} eps fitted once on validation: violation_rate", a.iloc[0]["violation_rate"], b.iloc[0]["violation_rate"], abs_tol=0.005)
+                pair(rows, f"ETH/USDC k={k} d={d} eps fitted once on validation: recapture_effective", a.iloc[0]["recapture_effective"], b.iloc[0]["recapture_effective"])
+    for pool, var in (("eth_wbtc_030", "corr24h"), ("eth_wsteth_001", "corr24h")):
+        for d in (1, 5, 60):
+            for dk in ("0", "eps_S"):
+                sel = lambda x: x[(x.pool == pool) & (x.variant == var) & (x.scenario == f"lag{d}") & (x.calibration == "rolling")
+                                  & np.isclose(x.eta, 0) & (x.delta == dk)]
+                a, b = sel(o), sel(n)
+                if len(a) and len(b):
+                    pair(rows, f"{SHORT[pool]} k=1 d={d} buffer {dk} violation_rate", a.iloc[0]["violation_rate"], b.iloc[0]["violation_rate"], abs_tol=0.005)
+                    pair(rows, f"{SHORT[pool]} k=1 d={d} buffer {dk} recapture_effective", a.iloc[0]["recapture_effective"], b.iloc[0]["recapture_effective"])
+    sel = lambda x: x[(x.scenario == "pyth_onchain") & (x.calibration == "rolling") & np.isclose(x.eta, 0) & (x.delta == "eps_S")]
+    a, b = sel(o), sel(n)
+    if len(a) and len(b):
+        pair(rows, "Pyth, no staleness check, eps buffer: violation_rate", a.iloc[0]["violation_rate"], b.iloc[0]["violation_rate"], abs_tol=0.005)
+        pair(rows, "Pyth, no staleness check, eps buffer: recapture_effective", a.iloc[0]["recapture_effective"], b.iloc[0]["recapture_effective"])
     emit("e4", pd.DataFrame(rows))
 
 
@@ -252,6 +268,34 @@ def e7():
     emit("e7_b10", pd.DataFrame(rows))
 
 
+def d0_check():
+    """At d = 0 the reference is exact, eps = 0, so every buffered row must equal the retained margin's row (same pool,
+    variant, regime, lambda, gamma) in every metric."""
+    n = pd.read_parquet(NEW / "e2" / "e2_summary_valid.parquet")
+    key = ["pool", "variant", "regime", "lam", "gamma"]
+    ret = n[n.mech == "retained"].set_index(key)
+    cols = [c for c in n.columns if c not in key + ["mech", "dmult", "phi", "eps_S_usd", "eps_S_used_median_usd", "eps_rel_median_bp"]
+            and pd.api.types.is_numeric_dtype(n[c])]
+    rows = []
+    for mech in ("buffered_1eps", "buffered_2eps"):
+        b = n[n.mech == mech].set_index(key)
+        m = b[cols].join(ret[cols], rsuffix="_ret", how="inner")
+        same = np.all([np.array_equal(m[c].to_numpy(), m[c + "_ret"].to_numpy(), equal_nan=True) for c in cols], axis=0)
+        for (pool, var), g in m.groupby(level=["pool", "variant"]):
+            eq = all(np.array_equal(g[c].to_numpy(), g[c + "_ret"].to_numpy(), equal_nan=True) for c in cols)
+            rows.append({"mech": mech, "pool": pool, "variant": var, "rows": len(g), "identical_to_retained": eq,
+                         "median_eps_rel_bp": float(n[(n.mech == mech) & (n.pool == pool) & (n.variant == var)]["eps_rel_median_bp"].median())})
+        del same
+    emit("e2_d0_buffered_equals_retained", pd.DataFrame(rows))
+
+
+def eps_reference():
+    s = pd.read_csv(NEW / "eps_reference" / "tables" / "eps_ref_summary_valid.csv")
+    c = pd.read_csv(NEW / "eps_reference" / "eps_ref_coverage_valid.csv")
+    cv = c.pivot_table(index=["pool", "variant", "reference"], columns="query_set", values="coverage").reset_index()
+    emit("eps_reference", s.merge(cv, on=["pool", "variant", "reference"], how="left"))
+
+
 def file_list():
     """Every file of the rerun with the commit of the manifest that wrote it: the tagged manifest whose tag is the longest
     part of the file name, else manifest_<split>.json, else the folder's manifest.json; gas_cold.csv: contracts_commit."""
@@ -277,7 +321,7 @@ def file_list():
     emit("file_list", pd.DataFrame(rows))
 
 
-for f in (e2, e8, e4, e5, e6, e7, file_list):
+for f in (eps_reference, d0_check, e2, e8, e4, e5, e6, e7, file_list):
     try:
         f()
     except Exception as ex:                                   # noqa: BLE001

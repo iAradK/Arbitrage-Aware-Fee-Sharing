@@ -20,12 +20,16 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "results" / "gas"
+sys.path.insert(0, str(ROOT))
+from common import reporting  # noqa: E402
+
+OUT = reporting.run_root() / "gas"            # results/gas, or results/<RESULTS_RUN>/gas
 INTRINSIC_GAS = 21_000
 
 SCENARIOS = {  # name: (description, starts a transaction)

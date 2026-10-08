@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -38,8 +39,17 @@ def git_commit() -> str:
         return "unknown"
 
 
+# RESULTS_RUN (environment): a rerun's own output root, results/<RESULTS_RUN>/<exp>, so a rerun never overwrites the
+# stored results/<exp>. Unset: results/<exp>, as before.
+RESULTS_RUN = os.environ.get("RESULTS_RUN", "")
+
+
+def run_root() -> Path:
+    return RESULTS / RESULTS_RUN if RESULTS_RUN else RESULTS
+
+
 def out_dir(exp: str) -> Path:
-    d = RESULTS / exp
+    d = run_root() / exp
     (d / "tables").mkdir(parents=True, exist_ok=True)
     (d / "figures").mkdir(parents=True, exist_ok=True)
     return d

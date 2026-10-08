@@ -27,5 +27,6 @@ forge_project: contracts
 final:
   hook_overhead_gas_charged: 52161
   tau_hat_wei: 3000000000
-  eps_source: eps_observed/eps_observed_daily_valid.csv   # under results/<RESULTS_RUN>
+  eps_source: eps_reference/eps_ref_daily_valid.csv   # under results/<RESULTS_RUN>
+  reference: lag5      # the hook's reference for the threshold: the benchmark delayed by delta_from_e4_lag_min = 5
   e6_config: experiments/configs/e6_final.yml

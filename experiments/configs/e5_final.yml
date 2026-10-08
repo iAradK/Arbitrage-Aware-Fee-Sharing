@@ -44,4 +44,5 @@ curvature_multiple: [0.0, 0.5, 1.0]
 # hook cost estimate: gas_only = K_hat = c0 + R (size-dependent part unseen); exact = K_hat = C(q) + R pointwise
 k_hat_modes: [gas_only, gas_only_buf, exact]   # v2: gas_only_buf = gas_only plus the buffer delta = eps_K (fix 3)
 final:
-  eps_source: eps_observed/eps_observed_daily_train.csv   # under results/<RESULTS_RUN>
+  reference: exact      # the scenarios value trades at the exact reference, so eps = 0 (2026-10-08 per-reference eps)
+  eps_source: eps_observed/eps_observed_daily_train.csv   # used only with another reference

@@ -68,6 +68,8 @@ def main_final():
     sam = c_all[(c_all["n_used"] > 0) & (c_all["S"] - c_all["C"] >= c_all["R"])].reset_index(drop=True)
     et = pd.read_csv(reporting.run_root() / cfg["final"]["eps_source"])
     et = et[(et.pool == POOL) & (et.variant == VARIANT)]
+    if "reference" in et:
+        et = et[et["reference"] == cfg["final"].get("reference", "lag1")]
     ppb = pd.Series(et["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(et["day"])).tz_localize(None))
     dd = pd.DatetimeIndex(sam["timestamp"])
     dd = (dd.tz_convert(None) if dd.tz is not None else dd).floor("D")

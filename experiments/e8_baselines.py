@@ -143,8 +143,8 @@ def run_tag(cfg, cfg2, split, d, k, regimes, cal, prior, tag):
             R = R_all[rname]
             seed = e2.eps_seed(key, variant, R, d, k, prior, cfg2)
             if "final" in cfg2:
-                er = e2.final_eps_rel(cfg2, key, variant, g)
-                ers = e2.final_eps_rel(cfg2, key, variant, g, cfg["eps_signed_source"], "eps_rel_signed_ppb")
+                er = e2.final_eps_rel(cfg2, key, variant, g, reference=f"lag{d}")
+                ers = e2.final_eps_rel(cfg2, key, variant, g, cfg["eps_signed_source"], "eps_rel_signed_ppb", reference=f"lag{d}")
                 r = e2.simulate(g, pool, C, cfg2, R, np.nan, d, k, seed, eps_rel=er, eps_rel_signed=ers)
             else:
                 r = e2.simulate(g, pool, C, cfg2, R, np.nan, d, k, seed)

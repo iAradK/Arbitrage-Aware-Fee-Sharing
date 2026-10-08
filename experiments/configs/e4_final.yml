@@ -41,5 +41,6 @@ cadences_min: [1, 5, 15]                 # the searcher acts every k minutes; k 
 eps_window_days: 7                       # rolling eps_S: trailing window, strictly earlier candidates (chosen on validation by coverage)
 eps_window_grid_days: [1, 3, 7, 14]
 final:
-  eps_source: eps_observed/eps_observed_daily_valid.csv   # under results/<RESULTS_RUN>
+  eps_source: eps_reference/eps_ref_daily_valid.csv   # under results/<RESULTS_RUN>; per reference (lag<d>, pyth, pyth_amax<A>)
+  fitted_once_source: eps_reference/eps_ref_fitted_once_valid.csv
   tau_hat_wei: 3000000000

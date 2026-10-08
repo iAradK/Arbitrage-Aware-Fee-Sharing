@@ -28,6 +28,7 @@ gas_per_extra_fragment: 22578
 # opportunity definition (brief): pre-swap deviation > gap_multiple * fee and the swap moves the price toward the reference.
 gap_multiple: {eth_usdc_005: 1.0, usdc_usdt_0001: 2.0, eth_wbtc_030: 1.0, eth_wsteth_001: 1.0}
 final:
-  eps_source: eps_observed/eps_observed_daily_valid.csv   # under results/<RESULTS_RUN>
+  eps_source: eps_reference/eps_ref_daily_valid.csv   # under results/<RESULTS_RUN>
+  reference: lag0      # opportunities are valued at the benchmark itself, so eps = 0
   gas_first_call: 38520
   gas_per_extra_fragment: 8637

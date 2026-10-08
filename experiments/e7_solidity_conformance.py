@@ -222,6 +222,8 @@ def smin(cfg: dict, out: Path, split: str) -> None:
         extra = {}
         if fin is not None:                                          # proportional buffer eps_rel * V_hat per opportunity
             et = eps_day[(eps_day["pool"] == key) & (eps_day["variant"] == "raw")]
+            if "reference" in et:                        # the hook's reference: the benchmark delayed by delta_from_e4_lag_min
+                et = et[et["reference"] == fin.get("reference", f"lag{cfg['delta_from_e4_lag_min']}")]
             ppb = pd.Series(et["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(et["day"])).tz_localize(None))
             dd = pd.DatetimeIndex(c["timestamp"])
             dd = (dd.tz_convert(None) if dd.tz is not None else dd).floor("D")

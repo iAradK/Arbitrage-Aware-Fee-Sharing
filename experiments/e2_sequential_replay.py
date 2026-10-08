@@ -287,12 +287,16 @@ def final_configs(cfg: dict, settlement: str | None = None) -> pd.DataFrame:
 
 
 def final_eps_rel(cfg: dict, pool_key: str, variant: str, g: pd.DataFrame, source: str | None = None,
-                  col: str = "eps_rel_ppb") -> np.ndarray:
+                  col: str = "eps_rel_ppb", reference: str | None = None) -> np.ndarray:
     """eps_rel in force at each minute of the grid: the daily whole-ppb observed-swap calibration of the pool variant
-    (`source` relative to the run root, default cfg["final"]["eps_source"]; `col` the ppb column)."""
+    (`source` relative to the run root, default cfg["final"]["eps_source"]; `col` the ppb column). A per-reference file
+    (column `reference`, eps_reference_calibration.py) needs `reference`, e.g. "lag1" for the benchmark delayed 1 minute."""
     f = reporting.run_root() / (source or cfg["final"]["eps_source"])
     tab = pd.read_csv(f)
     tab = tab[(tab["pool"] == pool_key) & (tab["variant"] == variant)]
+    if "reference" in tab:
+        assert reference is not None, f"{f} is per reference: name one"
+        tab = tab[tab["reference"] == reference]
     assert len(tab), f"no daily eps for {pool_key} {variant} in {f}"
     ppb = pd.Series(tab[col].to_numpy(np.int64), index=pd.DatetimeIndex(pd.to_datetime(tab["day"])).tz_localize(None))
     day = pd.DatetimeIndex(g["t"]).tz_convert(None).floor("D")
@@ -369,7 +373,7 @@ def main():
                 regimes = {"median": regimes["median"]}
             eps = eps_table(key, variant, regimes, d, cfg, k) if cfg["eps_mode"] == "fixed" else {n_: np.nan for n_ in regimes}
             g = mg.build_grid(key, a.split, variant, lags=(0, d))
-            er = final_eps_rel(cfg, key, variant, g) if final else None
+            er = final_eps_rel(cfg, key, variant, g, reference=f"lag{d}") if final else None   # the replay's reference
             for rname, R_usd in regimes.items():
                 seed = eps_seed(key, variant, R_usd, d, k, PRIOR[a.split], cfg) if cfg["eps_mode"] == "rolling" else None
                 r = simulate(g, pool, C, cfg, R_usd, eps[rname], d, k, seed, eps_rel=er)

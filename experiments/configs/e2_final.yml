@@ -40,9 +40,10 @@ final:
   # ceil(eps_rel * pi_hat * |X_1|) with token0 = ETH, in the replay's numeraire = the pool's token1), delta = 0, and
   # F = min(lambda * bracket, (1 - gamma) * [bracket - K_hat]^+). retained = the same with eps = 0.
   buffer: prop_net
-  # eps_rel: the daily observed-swap calibration per pool variant (experiments/eps_observed_calibration.py --variants
-  # e2): at 00:00 UTC the rolling 7-day p95 of |P_hat/P - 1| over observed price-correcting swaps, ceil to whole ppb.
-  eps_source: eps_observed/eps_observed_daily_valid.csv
+  # eps_rel: the daily calibration of the replay's own reference (experiments/eps_reference_calibration.py): at 00:00
+  # UTC the rolling 7-day p95 of |P / P_hat - 1| over observed price-correcting swaps, P_hat the benchmark delayed by the
+  # replay's lag d, ceil to whole ppb (lag 0: eps = 0, so the buffered rules equal the retained margin).
+  eps_source: eps_reference/eps_ref_daily_valid.csv
   settlement: charged        # charged corrections pay hook_overhead_gas_charged ("empty_vault": the sensitivity)
   k_hat: true_cost           # replays keep K_hat = K (gas at the block's actual gas price + R); tau_hat enters only
                              # where K_hat is estimated (E4, B.10)

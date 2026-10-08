@@ -163,10 +163,13 @@ def evaluate_final(c, sh, eps_rel, eta, delta_kind, lam, gam, fail_open, final) 
             "eps_rel_median_bp": float(np.median(e)) * 1e4 if len(c) else np.nan}
 
 
-def final_eps(cfg: dict, key: str, variant: str, t) -> np.ndarray:
-    """eps_rel in force at each candidate time: the daily whole-ppb observed-swap calibration."""
+def final_eps(cfg: dict, key: str, variant: str, t, reference: str = "lag1") -> np.ndarray:
+    """eps_rel in force at each candidate time: the daily whole-ppb calibration of the hook's reference (lag<d>, pyth,
+    pyth_amax<A>)."""
     tab = pd.read_csv(reporting.run_root() / cfg["final"]["eps_source"])
     tab = tab[(tab["pool"] == key) & (tab["variant"] == variant)]
+    if "reference" in tab:
+        tab = tab[tab["reference"] == reference]
     ppb = pd.Series(tab["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(tab["day"])).tz_localize(None))
     day = pd.DatetimeIndex(t)
     day = (day.tz_convert(None) if day.tz is not None else day).floor("D")
@@ -175,13 +178,13 @@ def final_eps(cfg: dict, key: str, variant: str, t) -> np.ndarray:
     return v / 1e9
 
 
-def fitted_once_eps(key: str, variant: str, q: float) -> float:
-    """One eps_rel fitted on the validation months: P95 of |P_hat / P - 1| over all observed price-correcting swaps."""
-    sys.path.insert(0, str(ROOT / "experiments"))
-    import eps_observed_calibration as epc
-    va = epc.observed(key, variant, "valid")
-    err = va.loc[va["correcting"], "err"].to_numpy()
-    return float(np.ceil(np.quantile(err, q) * 1e9) / 1e9) if len(err) else 0.0
+def fitted_once_eps(cfg: dict, key: str, variant: str, reference: str) -> float:
+    """One eps_rel fitted on the validation months for the reference: P95 of |P / P_hat - 1| over all observed
+    price-correcting swaps, ceil ppb (eps_reference_calibration.py, eps_ref_fitted_once_valid.csv)."""
+    t = pd.read_csv(reporting.run_root() / cfg["final"]["fitted_once_source"])
+    t = t[(t["pool"] == key) & (t["variant"] == variant) & (t["reference"] == reference)]
+    assert len(t) == 1, f"no fitted-once eps for {key} {variant} {reference}"
+    return float(t["eps_fitted_once_ppb"].iloc[0]) / 1e9
 
 
 def pyth_ref(c: pd.DataFrame, pyth: pd.DataFrame, cut: pd.Timestamp):
@@ -234,7 +237,7 @@ def main():
             for k in cfg["cadences_min"]:
                 ksuf = "" if k == 1 else f"_k{k}"
                 cand = {s: baseline_candidates(key, s, variant, lags, gu, R_usd, k) for s in (["valid"] if a.split == "valid" else ["valid", "test"])}
-                eps_once = fitted_once_eps(key, variant, q) if fin is not None else None
+                eps_once = None
                 prior = cand["valid"] if a.split == "test" else baseline_candidates(key, "train", variant, lags, gu, R_usd, k, tail_days=seed_days)
                 c = cand[a.split]
                 for d in lags:
@@ -256,8 +259,9 @@ def main():
                     calib = [(fixed_name, eps_val), ("rolling", eps_roll)]
                     if a.split == "test":
                         calib.append(("test (in-sample)", eps_ins))
-                    if fin is not None:                  # eps_rel: the daily observed-swap calibration ("rolling") and one fit
-                        calib = [(fixed_name, np.full(len(c), eps_once)), ("rolling", final_eps(cfg, key, variant, c["t"]))]
+                    if fin is not None:                  # eps_rel of the reference lagged by d: daily ("rolling") and one fit
+                        calib = [(fixed_name, np.full(len(c), fitted_once_eps(cfg, key, variant, f"lag{d}"))),
+                                 ("rolling", final_eps(cfg, key, variant, c["t"], f"lag{d}"))]
                     for cname, eps in calib:
                         for eta in cfg["etas"]:
                             for dk in ("0", "eps_S", "eps_S+eps_K"):
@@ -278,8 +282,9 @@ def main():
                                      "eps_S_rolling_median_usd": float(np.median(eps_roll)) if len(ce) else np.nan, "R_usd": R_usd,
                                      "n_cand_valid": len(cv), "n_cand_eval": len(ce), "median_ref_age_s": float(np.median(ae)) if len(ae) else np.nan})
                     cal_p = [(fixed_name, eps_val), ("rolling", eps_roll)]
-                    if fin is not None:
-                        cal_p = [(fixed_name, np.full(len(ce), eps_once)), ("rolling", final_eps(cfg, key, variant, ce["t"]))]
+                    if fin is not None:                  # Pyth without a staleness check
+                        cal_p = [(fixed_name, np.full(len(ce), fitted_once_eps(cfg, key, variant, "pyth"))),
+                                 ("rolling", final_eps(cfg, key, variant, ce["t"], "pyth"))]
                     for cname, eps in cal_p:
                         for eta in cfg["etas"]:
                             for dk in ("0", "eps_S", "eps_S+eps_K"):
@@ -307,8 +312,9 @@ def main():
                                          "fail_open_share": float(1 - fresh.mean()) if len(ce) else np.nan,
                                          "fail_open_share_valid_months": float(1 - fresh_v.mean()) if len(av_) else np.nan})
                         cal_A = [(fixed_name, np.full(len(ce), eps_val_A)), ("rolling", eps_roll_A)]
-                        if fin is not None:
-                            cal_A = [(fixed_name, np.full(len(ce), eps_once)), ("rolling", final_eps(cfg, key, variant, ce["t"]))]
+                        if fin is not None:              # Pyth with staleness bound A (valid prices only)
+                            cal_A = [(fixed_name, np.full(len(ce), fitted_once_eps(cfg, key, variant, f"pyth_amax{A}"))),
+                                     ("rolling", final_eps(cfg, key, variant, ce["t"], f"pyth_amax{A}"))]
                         for cname, eps in cal_A:
                             for eta in cfg["etas"]:
                                 for dk in ("0", "eps_S", "eps_S+eps_K"):

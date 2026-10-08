@@ -94,12 +94,15 @@ def main():
         has = (n0 > 0)[:, 0]
         final = "final" in cfg
         if final:                                        # the hook's buffer: eps_rel of the scenario's day times |d1|, in USD
-            tab = pd.read_csv(reporting.run_root() / cfg["final"]["eps_source"])
-            tab = tab[(tab["pool"] == key) & (tab["variant"] == cfg["variant"])]
-            ppb = pd.Series(tab["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(tab["day"])).tz_localize(None))
-            day = pd.DatetimeIndex(sc["t"]).tz_convert(None).floor("D")
-            eps_rel = ppb.reindex(day).to_numpy() / 1e9           # ppb -> fraction
-            assert np.isfinite(eps_rel).all(), f"{key}: scenario days without a training eps"
+            if cfg["final"].get("reference") == "exact":   # the scenarios value trades at the exact reference: eps = 0
+                eps_rel = np.zeros(len(sc))
+            else:
+                tab = pd.read_csv(reporting.run_root() / cfg["final"]["eps_source"])
+                tab = tab[(tab["pool"] == key) & (tab["variant"] == cfg["variant"])]
+                ppb = pd.Series(tab["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(tab["day"])).tz_localize(None))
+                day = pd.DatetimeIndex(sc["t"]).tz_convert(None).floor("D")
+                eps_rel = ppb.reindex(day).to_numpy() / 1e9       # ppb -> fraction
+                assert np.isfinite(eps_rel).all(), f"{key}: scenario days without a training eps"
             Sb = np.maximum(S - eps_rel[:, None] * np.abs(tr["d1"]) * usd, 0.0)
         else:
             Sb = S
@@ -152,7 +155,8 @@ def main():
                           {c: "{:.3f}" for c in ["execution_rate", "baseline_optimum_kept", "q_ratio_median", "q_ratio_mean", "surplus_ratio_mean", "recapture"]} | {"price_error_mean": "{:.2e}"})
     ins = [CACHE / "aligned" / f"{k}.parquet" for k in cfg["pools"]]
     if "final" in cfg:
-        ins += [reporting.run_root() / cfg["final"]["eps_source"], ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
+        ins += ([] if cfg["final"].get("reference") == "exact" else [reporting.run_root() / cfg["final"]["eps_source"]]) + [
+            ROOT / "config" / "gas_block_scope.json", Path(a.config).resolve()]
     reporting.write_manifest("e5", cfg, ins, "train", {"note": "train months only", "final": cfg.get("final"),
                                                          "results_run": reporting.RESULTS_RUN})
     figs(res, out, cfg)

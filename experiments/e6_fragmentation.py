@@ -211,6 +211,8 @@ def main():
             print(key, variant, info, flush=True)
             if fin is not None and len(opps):
                 et = epst[(epst["pool"] == key) & (epst["variant"] == variant)]
+                if "reference" in et:                    # E6 values trades at the benchmark itself (lag0: eps = 0)
+                    et = et[et["reference"] == fin.get("reference", "lag1")]
                 ppb = pd.Series(et["eps_rel_ppb"].to_numpy(float), index=pd.DatetimeIndex(pd.to_datetime(et["day"])).tz_localize(None))
                 dd = pd.DatetimeIndex(opps["timestamp"])
                 dd = (dd.tz_convert(None) if dd.tz is not None else dd).floor("D")

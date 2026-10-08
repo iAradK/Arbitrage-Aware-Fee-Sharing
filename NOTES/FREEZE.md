@@ -99,3 +99,29 @@ E5 runs on the training months only (as always); its config is `experiments/conf
 8. B.8 (`e2_hook_gas.py`) and B.9 (`e2_bootstrap.py` per regime, `e2_r_scenarios.py`); B.4 comes from the E2 ideal run.
 
 If any step fails, the run stops and is reported; nothing is fixed and rerun.
+
+## Incident during the test run (2026-10-08)
+
+**What failed.**
+- The run on f0e46a9 stopped at CORE step 1, at the B.5 fee/TVL ratio (`experiments/fees_tvl_check.py`).
+- The error was `FileNotFoundError` on `data/data/subgraph/pool_day_data_jun_jul_2026.json`.
+- Every step before it had completed with exit 0: the test eps, the E2 ideal replay and the delayed grid, the E2 bootstraps, and the ex-post margin.
+
+**Cause.**
+- The worktree's `data/data` folder did not link the main checkout's `subgraph` folder. `gas` and `lido` are directory junctions to the main checkout; `subgraph` had no link.
+- A check of the remaining steps found the same gap for `data/data/bq`, read by `e8_mev_tax_observed.py` (priority fees).
+
+**Fix (link only, approved by the user).**
+- `data/data/subgraph` and `data/data/bq` were added as directory junctions to the main checkout, like `gas` and `lido`.
+- No code, config or parameter changed. The tree was clean at f0e46a9 before the run resumed.
+- `config/data_manifest.json` has no hash for either file, so their SHA-256 is recorded here:
+
+| File | SHA-256 |
+|---|---|
+| `data/data/subgraph/pool_day_data_jun_jul_2026.json` | c5e07c61c80d7a397603fd049c98e48bc420d3ba1233db2484fe04730fd022d8 |
+| `data/data/bq/swap_logs_decoded.parquet` | dd2a01c0f36144231200e4d548d29e97573c2404f55dbe833876517bd390b479 |
+
+**Resumption.**
+- The run resumed at the fee/TVL step, then ran E4, E6, E7/B.10, E8, E5, B.8 and B.9 unchanged.
+- No completed step was rerun.
+- Every result is from f0e46a9. This note is a separate NOTES-only commit, made after the run so that the result manifests keep f0e46a9.

@@ -1,6 +1,14 @@
 """Figures of Section 5 (Evaluation) that replace tables. Run from the repository root:  python paper/make_eval_figures.py
 Every number is read from results/ (no hard-coded values). Output: paper/figures/*.pdf
+
+  --run NAME      read results/NAME/ (a RESULTS_RUN root) instead of results/
+  --results DIR   base results directory (default: <repo>/results)
+  --out DIR       output directory (default: paper/figures)
+  --figs a,b      only these figures (eval_replay, eval_lag, eval_heat, eval_costs, eval_sens)
+When e3/tables/e3_totals_test.csv is absent (a run root has no E3), its lambda x gamma rows are taken from
+e2/e2_summary_test.parquet: the median-regime rows and E3's columns (experiments/e3_pareto_frontier.py writes the same).
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -18,7 +26,6 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 R = ROOT / "results"
 OUT = ROOT / "paper" / "figures"
-OUT.mkdir(parents=True, exist_ok=True)
 plotstyle.apply()
 plt.rcParams.update({"font.size": 8, "axes.titlesize": 8, "axes.labelsize": 8, "legend.fontsize": 7})
 
@@ -57,7 +64,21 @@ def mbar(ax, x, h, w, m, **kw):
     return ax.bar(x, h, w, color=col, hatch=hatch, **BAR_EDGE, **kw)
 
 
+E3_COLS = ["pool", "variant", "regime", "mech", "lam", "gamma", "protection_usd", "searcher_net_usd", "executed_correction", "execution_rate",
+           "etw_mean", "etw_p95", "mean_lp_vs_hodl_bp"]
+
+
+def e3_totals():
+    """E3's lambda x gamma totals; without the E3 file, the same rows from the E2 summary (median regime)."""
+    f = R / "e3/tables/e3_totals_test.csv"
+    if f.exists():
+        return pd.read_csv(f)
+    s = pd.read_parquet(R / "e2/e2_summary_test.parquet")
+    return s[s.regime == "median"][E3_COLS].reset_index(drop=True)
+
+
 def save(fig, name):
+    OUT.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT / f"{name}.pdf", bbox_inches="tight")
     fig.savefig(OUT / f"{name}.png", bbox_inches="tight", dpi=200)
     plt.close(fig)
@@ -95,7 +116,7 @@ def frontier_panel(ax, d, p, e8=None):
 
 def fig_replay():
     h = pd.read_csv(R / "e2/tables/e2_headline_test.csv")
-    d = pd.read_csv(R / "e3/tables/e3_totals_test.csv")
+    d = e3_totals()
     d = d[d.regime == "median"]
     mechs = [(m, MECH[m][0]) for m in ("baseline", "static_0.05pct", "static_0.30pct", "unconstrained", "cap_gamma0", "retained")]
     fig, (a, b, c) = plt.subplots(1, 3, figsize=(7.4, 2.3), gridspec_kw={"width_ratios": [1.5, 1, 1]})
@@ -256,7 +277,7 @@ def frag_panel(a):
 
 # ---------------------------------------------------------------- Appendix: sensitivity to lambda and gamma
 def fig_sens():
-    d = pd.read_csv(R / "e3/tables/e3_totals_test.csv")
+    d = e3_totals()
     lams = [0.25, 0.5, 0.75, 0.95]; gams = [0.0, 0.005, 0.02, 0.05, 0.10]
     fig, axs = plt.subplots(2, len(POOLS), figsize=(7.4, 3.6))
     for j, p in enumerate(POOLS):
@@ -290,7 +311,17 @@ def fig_sens():
     save(fig, "eval_sens")
 
 
+FIGS = {"eval_replay": fig_replay, "eval_lag": fig_lag, "eval_heat": fig_heat, "eval_costs": fig_costs, "eval_sens": fig_sens}
+
 if __name__ == "__main__":
-    for f in (fig_replay, fig_lag, fig_heat, fig_costs, fig_sens):
-        f()
-        print("ok", f.__name__)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--run", default=None, help="read results/<run>/ instead of results/")
+    ap.add_argument("--results", default=str(ROOT / "results"), help="base results directory")
+    ap.add_argument("--out", default=str(OUT))
+    ap.add_argument("--figs", default=",".join(FIGS))
+    a = ap.parse_args()
+    R = Path(a.results) / a.run if a.run else Path(a.results)
+    OUT = Path(a.out)
+    for name in a.figs.split(","):
+        FIGS[name]()
+        print("ok", name)

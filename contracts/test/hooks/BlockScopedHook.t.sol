@@ -361,6 +361,7 @@ contract ParticipationAwareHookFeeTest is BlockScopedHookTestBase {
     function test_KappaUsesReferenceWhenNoGasPriceConfigured() public {
         ParticipationAwareHook.Params memory p = _defaultParams();
         p.gasUnits = 100_000;
+        p.gasPriceToken0Wad = 0; // the helper sets 1e18
         ParticipationAwareHook h = _deployHook(p);
         (PoolKey memory key, PoolId id) = _pool(IHooks(address(h)), 1.5e18);
         vm.fee(3 gwei);

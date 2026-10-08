@@ -84,12 +84,15 @@ abstract contract BlockScopedHookTestBase is Deployers {
     }
 
     /// @dev kappa = kHat + delta as a constant (the hook keeps no separate delta), no buffer.
+    /// gasPriceToken0Wad = 1e18: token0 is native ETH in all three deployed pools, so the gas term
+    /// is 1 token0 base unit per wei. Tests of the reference-priced path set it back to 0.
     function _params(uint256 kHat, uint256 delta, uint16 lambdaBps_, uint16 gammaBps_)
         internal
         pure
         returns (ParticipationAwareHook.Params memory p)
     {
         p.kHatConstant = kHat + delta;
+        p.gasPriceToken0Wad = 1e18;
         p.lambdaBps = lambdaBps_;
         p.gammaBps = gammaBps_;
         p.stalenessThresholdSeconds = STALENESS;
@@ -104,8 +107,9 @@ abstract contract BlockScopedHookTestBase is Deployers {
     uint16 internal constant FINAL_GAMMA_BPS = 200; // E2 headline gamma = 0.02
     uint32 internal constant FINAL_EPS_PPB = 2_830_000; // eps_rel = 0.283% (Q4 median, ETH/USDC)
 
-    /// @dev The evaluated configuration: kappa = K_hat (g_hat at base fee + 3 gwei, priced at the
-    /// reference), relative buffer eps_rel, lambda 0.75, gamma 0.02; this contract may update eps.
+    /// @dev The evaluated configuration: kappa = K_hat (g_hat at base fee + 3 gwei, priced at
+    /// gasPriceToken0Wad = 1e18, token0 = ETH), relative buffer eps_rel on each transaction's net
+    /// token1 change, lambda 0.75, gamma 0.02; this contract may update eps.
     function _finalParams(uint256 kHat) internal view returns (ParticipationAwareHook.Params memory p) {
         p = _params(kHat, 0, LAMBDA_BPS, FINAL_GAMMA_BPS);
         p.gasUnits = FINAL_GAS_UNITS;
@@ -317,18 +321,19 @@ abstract contract BlockScopedHookTestBase is Deployers {
     }
 
     /// @dev Block surplus under V1: the closed brackets plus the current transaction's bracket,
-    /// with the relative buffer ceil(eps * ref * gross / WAD^2), as the hook computes it.
+    /// with the relative buffer ceil(eps * ref * |net token1 change| / WAD^2), as the hook computes it.
     function _scopeSurplus(ParticipationAwareHook.Scope memory s) internal pure returns (uint256) {
         int256 v = int256(s.cumulativeDelta0) + (int256(s.cumulativeDelta1) * int256(uint256(s.referencePriceWad))) / 1e18;
         uint256 eps = uint256(s.epsilonRelPpb) * 1e9;
-        if (eps != 0 && s.txGross1 != 0) {
-            v -= int256(FullMath.mulDivRoundingUp(eps * uint256(s.referencePriceWad), s.txGross1, 1e36));
+        uint256 net1 = s.cumulativeDelta1 >= 0 ? uint256(int256(s.cumulativeDelta1)) : uint256(-int256(s.cumulativeDelta1));
+        if (eps != 0 && net1 != 0) {
+            v -= int256(FullMath.mulDivRoundingUp(eps * uint256(s.referencePriceWad), net1, 1e36));
         }
         return uint256(s.closedSurplus) + (v > 0 ? uint256(v) : 0);
     }
 
-    /// @dev The bracket of one transaction with net core delta (d0, d1) and gross volume |d1| (a
-    /// single swap) under the scope's locked reference and eps. Since the current transaction's
+    /// @dev The bracket of one transaction with net core delta (d0, d1) under the scope's
+    /// locked reference and eps. Since the current transaction's
     /// state is transient, getScope from a later transaction (every call under --isolate) shows
     /// it only folded into closedSurplus = P; tests compare P with this instead.
     function _txBracket(ParticipationAwareHook.Scope memory s, int256 d0, int256 d1) internal pure returns (uint256) {
@@ -337,7 +342,6 @@ abstract contract BlockScopedHookTestBase is Deployers {
         t.epsilonRelPpb = s.epsilonRelPpb;
         t.cumulativeDelta0 = int128(d0);
         t.cumulativeDelta1 = int128(d1);
-        t.txGross1 = uint128(d1 >= 0 ? uint256(d1) : uint256(-d1));
         return _scopeSurplus(t);
     }
 

@@ -50,7 +50,10 @@ abstract contract BlockScopeBoundaryBase is BlockScopedHookTestBase {
         setUpBase();
         ParticipationAwareHook.Params memory p = _params(K, 0, LAMBDA_BPS, GAMMA_BPS);
         p.gasUnits = GAS_UNITS;
-        p.priorityFeeWei = TAU; // gasPriceToken0Wad = 0: kappa's gas part is priced at the locked reference
+        p.priorityFeeWei = TAU;
+        // gasPriceToken0Wad = 0 by design (the helper sets 1e18): kappa's gas part is priced at
+        // the locked reference, so the tests below can check that kappa re-locks with it
+        p.gasPriceToken0Wad = 0;
         p.epsilonRelPpb = FINAL_EPS_PPB; // relative buffer, locked per scope
         p.epsilonAdmin = address(this);
         hook = _deployHook(p);
@@ -392,17 +395,25 @@ contract BlockScopeBoundaryTest is BlockScopeBoundaryBase {
         _assertSaturatedForRestOfBlock();
     }
 
-    function test_OverflowGrossVolumeSaturates() public {
+    /// @dev The buffer uses the transaction's net token1 change, so no gross volume is tracked:
+    /// trading token1 back and forth (gross volume above 2^128 - 1, net in int128) neither
+    /// saturates nor changes the charge of the net position (the S1 hook saturated here).
+    function test_RoundTripVolumeDoesNotSaturate() public {
         _rawSetUp();
-        // one transaction trading token1 back and forth: its net delta stays in int128 but its
-        // gross volume sum |delta1| exceeds 2^128 - 1 on the third swap
+        _refInit();
         int128[] memory d0 = new int128[](3);
         int128[] memory d1 = new int128[](3);
         (d1[0], d1[1], d1[2]) = (type(int128).max, -type(int128).max, type(int128).max);
         int128[] memory r = _oneTx(d0, d1);
         assertGt(r[0], 0, "first swap charged");
-        assertEq(r[2], 0, "gross volume above 2^128 - 1: charge 0");
-        _assertSaturatedForRestOfBlock();
+        assertEq(r[1], 0, "back to zero: nothing more");
+        assertEq(r[2], 0, "the same net position again: the watermark already holds its charge");
+        ParticipationAwareHook.Scope memory s = raw.getScope(rawKey.toId());
+        assertTrue(s.watermark != type(uint128).max, "not saturated");
+        assertEq(raw.scopeSurplus(rawKey.toId()), _txBracket(s, 0, type(int128).max), "A = the bracket of the net delta");
+        RefOut memory e = _refRun(raw);
+        for (uint256 i; i < 3; ++i) assertEq(uint256(int256(r[i])), e.w[i], "charge = reference");
+        assertEq(raw.scopeSurplus(rawKey.toId()), e.surplus[2], "block surplus = reference");
     }
 
     function test_OverflowTargetAboveUint128Saturates() public {

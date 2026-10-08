@@ -13,23 +13,26 @@ import {SurplusSharingAccounting} from "../SurplusSharingAccounting.sol";
 import {IReferenceOracle} from "../interfaces/IReferenceOracle.sol";
 
 /// @notice Uniswap v4 hook for participation-aware surplus sharing: block scope with
-/// per-transaction clipping (V1) and a relative proportional buffer. All logic runs in
+/// per-transaction clipping (V1) and a relative proportional buffer on each transaction's net
+/// token1 change (P-net). All logic runs in
 /// afterSwap (permissions: AFTER_SWAP, AFTER_SWAP_RETURNS_DELTA). The oracle is read in the
 /// afterSwap of the block scope's first swap.
 ///
 /// Accounting (integer mirror: common.fixedpoint.ScopedHookReference(scope="block",
 /// accumulation="tx_clip", buffer="rel")). One scope per pool and block. Within it, each
 /// transaction t has a bracket
-///     b_t = [ X_t . pi_hat  -  ceil(eps_rel * pi_hat * G_t) ]^+
+///     b_t = [ X_t . pi_hat  -  ceil(eps_rel * pi_hat * |X_t,1|) ]^+
 /// where X_t is the transaction's net core delta, pi_hat the locked reference (token0 is the
-/// numeraire) and G_t the transaction's gross token1 volume sum |delta1|. The block's surplus
+/// numeraire) and |X_t,1| the absolute net token1 change of the transaction. A round trip
+/// inside the transaction (volume that nets out) therefore does not enlarge the buffer, and
+/// the bracket of a transaction depends only on its net delta. The block's surplus
 /// is A = sum of the completed transactions' brackets + the current transaction's bracket, and
 /// the watermark rule of Definition 3 applies to F(A): each swap pays F(A) - W, W never falls.
 /// A transaction's negative surplus is clipped at zero before it enters the block total, so an
 /// unrelated transaction can never lower another's charge; within a transaction the surplus
 /// nets as before, so splitting inside a transaction gains nothing. kappa = K_hat only
-/// (deducted once per block, inside F); the buffer is charged per unit of volume, so splitting
-/// across transactions does not shrink it.
+/// (deducted once per block, inside F); the buffer is charged per unit of net token1 change,
+/// so splitting a one-directional trade across transactions does not shrink it.
 ///
 /// The current transaction's state lives in transient storage and vanishes when the
 /// transaction ends; the persistent slot P holds the block surplus A including the current
@@ -45,8 +48,8 @@ import {IReferenceOracle} from "../interfaces/IReferenceOracle.sol";
 ///   P: P_SET | (closed + b_t)                      (block surplus A after the latest swap)
 /// and per pool and transaction, transient, at keccak256(TX_NAMESPACE, poolId) + k:
 ///   T0: int128 txDelta0 | int128 txDelta1             (current transaction, net)
-///   T1: uint128 txGross1 | flag at bit 128            (G_t; flag = this transaction swapped here)
-///   T2: uint256 closed                                (sum of the earlier transactions' brackets)
+///   T1: uint128 closed | flag at bit 128              (sum of the earlier transactions' brackets;
+///                                                      flag = this transaction swapped here)
 /// A scope opens on the first swap of a block whose oracle read is valid; an invalid read opens
 /// nothing, charges 0, accumulates nothing, and the next swap retries. Opening never zeroes the
 /// old slots (every write is nonzero to nonzero after the pool's first swap).
@@ -57,8 +60,9 @@ import {IReferenceOracle} from "../interfaces/IReferenceOracle.sol";
 ///
 /// Bit widths: the reference must fit uint128 (larger oracle prices are rejected), so
 /// txDelta1 * reference fits int256. A transaction delta outside int128, a closed surplus (P at
-/// a transaction's first swap) or a gross volume above uint128, a target above uint128 or a charge that does not fit the int128
-/// return delta saturates W (W = 2^128 - 1): no further charge on the pool in that block.
+/// a transaction's first swap) above uint128, a target above uint128 or a charge that does not
+/// fit the int128 return delta saturates W (W = 2^128 - 1): no further charge on the pool in
+/// that block.
 ///
 /// Settlement as before: each marginal charge is converted into the swap's unspecified currency
 /// at the locked reference (rounded down), returned as the afterSwap delta and minted as
@@ -89,7 +93,6 @@ contract ParticipationAwareHook is MinimalBaseHook, SurplusSharingAccounting {
         uint128 referencePriceWad;
         uint128 kappa;
         uint256 closedSurplus; // sum of the completed transactions' clipped, buffered brackets
-        uint128 txGross1; // the current transaction's gross token1 volume
     }
 
     struct Slots {
@@ -209,7 +212,6 @@ contract ParticipationAwareHook is MinimalBaseHook, SurplusSharingAccounting {
         uint256 c;
         if (delta0 != int128(delta0) || delta1 != int128(delta1)) return 0;
         uint256 closed;
-        uint256 gross = _abs(delta1);
         if (uint64(a) == block.number) {
             if ((a & W_MASK) == W_MASK) return 0;
             c = s.c;
@@ -217,30 +219,28 @@ contract ParticipationAwareHook is MinimalBaseHook, SurplusSharingAccounting {
             uint256 g = _tload(t + 1);
             if (g & TX_FLAG == 0) {
                 closed = s.p & ~P_SET; // a new transaction: every earlier one is folded into P
+                if (closed > SATURATED) return 0;
             } else {
-                closed = _tload(t + 2);
+                closed = uint128(g);
                 uint256 x = _tload(t);
                 delta0 += int128(uint128(x));
                 delta1 += int128(uint128(x >> 128));
-                gross += uint128(g);
                 if (delta0 != int128(delta0) || delta1 != int128(delta1)) return 0;
             }
-            if (closed > SATURATED || gross > SATURATED) return 0;
         } else {
             (uint8 code, uint256 price) = _observe(id);
             if (code != ORACLE_OK) return 0;
             c = price | (_kappa(price) << 128);
             a = _freshA();
         }
-        uint256 target = _target(closed + _bracket(delta0, delta1, gross, a, c), a, c);
+        uint256 target = _target(closed + _bracket(delta0, delta1, a, c), a, c);
         if (target > SATURATED) return 0;
         uint256 w = uint128(a >> 64);
         return target > w ? target - w : 0;
     }
 
     /// @notice Decoded scope of a pool (testing and diagnostics), as seen from the calling
-    /// transaction. The current transaction's fields (cumulativeDelta0/1, txGross1) are
-    /// transient. Inside a transaction that has swapped on the pool they hold its running
+    /// transaction. The current transaction's fields (cumulativeDelta0/1) are transient. Inside a transaction that has swapped on the pool they hold its running
     /// values, and closedSurplus holds the earlier transactions' brackets. Anywhere else
     /// (another transaction, or a later call under `forge test --isolate`) they read 0 and
     /// closedSurplus is P, the whole block surplus, since every transaction is then complete.
@@ -263,8 +263,7 @@ contract ParticipationAwareHook is MinimalBaseHook, SurplusSharingAccounting {
             uint256 x = _tload(t);
             scope.cumulativeDelta0 = int128(uint128(x));
             scope.cumulativeDelta1 = int128(uint128(x >> 128));
-            scope.txGross1 = uint128(g);
-            scope.closedSurplus = _tload(t + 2);
+            scope.closedSurplus = uint128(g);
         }
     }
 
@@ -314,29 +313,26 @@ contract ParticipationAwareHook is MinimalBaseHook, SurplusSharingAccounting {
         int256 n0 = delta.amount0();
         int256 n1 = delta.amount1();
         uint256 closed;
-        uint256 gross = _abs(n1);
         uint256 t = _txSlot(id);
         bool newTx = fresh; // a fresh scope starts the transaction's state, whatever the flag says
         if (!fresh) {
             uint256 g = _tload(t + 1);
             if (g & TX_FLAG == 0) {
                 closed = s.p & ~P_SET; // fold the completed transactions
+                if (closed > SATURATED) return _saturate(id, s, a);
                 newTx = true;
             } else {
-                closed = _tload(t + 2);
+                closed = uint128(g);
                 uint256 x = _tload(t);
                 n0 += int128(uint128(x));
                 n1 += int128(uint128(x >> 128));
-                gross += uint128(g);
                 if (n0 != int128(n0) || n1 != int128(n1)) return _saturate(id, s, a);
             }
-            if (closed > SATURATED || gross > SATURATED) return _saturate(id, s, a);
         }
         _tstore(t, uint256(uint128(int128(n0))) | (uint256(uint128(int128(n1))) << 128));
-        _tstore(t + 1, gross | TX_FLAG);
-        if (newTx) _tstore(t + 2, closed);
+        if (newTx) _tstore(t + 1, closed | TX_FLAG);
 
-        uint256 surplus = closed + _bracket(n0, n1, gross, a, c);
+        uint256 surplus = closed + _bracket(n0, n1, a, c);
         s.p = surplus | P_SET;
         uint256 target = _target(surplus, a, c);
         uint256 w = uint128(a >> 64);
@@ -378,15 +374,15 @@ contract ParticipationAwareHook is MinimalBaseHook, SurplusSharingAccounting {
         );
     }
 
-    /// @dev [x0 + x1 * reference / WAD - ceil(eps * reference * gross / WAD^2)]^+ with token0 as
-    /// the numeraire: the product rounds toward zero, the buffer up (in the hook's favour).
-    /// |x1| <= 2^127 and reference < 2^128, so the product fits int256; eps * reference < 2^190
-    /// and the 512-bit mulDiv keeps the buffer exact.
-    function _bracket(int256 x0, int256 x1, uint256 gross, uint256 a, uint256 c) internal pure returns (uint256) {
+    /// @dev [x0 + x1 * reference / WAD - ceil(eps * reference * |x1| / WAD^2)]^+ with token0 as
+    /// the numeraire and (x0, x1) the transaction's net delta: the product rounds toward zero,
+    /// the buffer up (in the hook's favour). |x1| <= 2^127 and reference < 2^128, so the product
+    /// fits int256; eps * reference < 2^190 and the 512-bit mulDiv keeps the buffer exact.
+    function _bracket(int256 x0, int256 x1, uint256 a, uint256 c) internal pure returns (uint256) {
         uint256 ref = uint128(c);
         int256 value = x0 + (x1 * int256(ref)) / int256(WAD);
         uint256 eps = uint256(uint32(a >> 224)) * PPB_TO_WAD;
-        if (eps != 0 && gross != 0) value -= int256(FullMath.mulDivRoundingUp(eps * ref, gross, WAD * WAD));
+        if (eps != 0 && x1 != 0) value -= int256(FullMath.mulDivRoundingUp(eps * ref, _abs(x1), WAD * WAD));
         return value > 0 ? uint256(value) : 0;
     }
 
@@ -394,7 +390,7 @@ contract ParticipationAwareHook is MinimalBaseHook, SurplusSharingAccounting {
         return x >= 0 ? uint256(x) : uint256(-x);
     }
 
-    /// @dev The pool's first transient slot T0; T1 and T2 follow it.
+    /// @dev The pool's first transient slot T0; T1 follows it.
     function _txSlot(PoolId id) internal pure returns (uint256) {
         return uint256(keccak256(abi.encode(TX_NAMESPACE, PoolId.unwrap(id))));
     }

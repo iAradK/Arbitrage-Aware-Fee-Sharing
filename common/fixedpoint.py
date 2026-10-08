@@ -87,8 +87,9 @@ class ScopedHookReference:
     The transaction-scoped contract treats an invalid oracle at the first swap as disabling the pool for the rest
     of the transaction, and it has no uint128/int128 limits; neither difference matters for the checks here.
 
-    The final hook (ParticipationAwareHook.sol, S1) is scope="block", accumulation="tx_clip", buffer="rel", with
-    eps_wad = its locked eps_rel in parts per billion x 1e9 and tau_wei = 3 gwei; the earlier block-scoped hook was
+    The final hook (ParticipationAwareHook.sol) is scope="block", accumulation="tx_clip", buffer="rel",
+    volume="net", with eps_wad = its locked eps_rel in parts per billion x 1e9 and tau_wei = 3 gwei; the S1 hook
+    (final-integration, 6a4541b) was the same with volume="gross"; the earlier block-scoped hook was
     accumulation="net", buffer="none".
 
     `accumulation` selects how the scope's surplus A is accumulated (the watermark and settlement are unchanged):
@@ -105,26 +106,31 @@ class ScopedHookReference:
       - "abs": ceil(eps * g / WAD), eps = `eps_wad`, a price bound in token0 per token1 base unit, WAD-scaled like
         the reference;
       - "rel": ceil(eps * ref * g / WAD^2), eps = `eps_wad` a relative price bound (WAD = 100%).
-    g is the bracket's gross token1 volume, the sum of |d1| over its swaps (the scope for "net", the transaction for
-    "tx_clip", the swap for "swap_clip"). With token0 as the numeraire, S_hat - S = (P_hat - P) * d1 exactly, so the
-    deduction bounds the bracket's surplus error when |P_hat - P| <= eps. `eps_wad` is read when a scope opens and
-    locked with kappa; it can be changed between swaps like `kappa_const`. g is uint128 (saturates beyond).
+    `volume` selects g, over the bracket's swaps (the scope for "net", the transaction for "tx_clip", the swap for
+    "swap_clip"):
+      - "net" (the contract): g = |sum of d1|, the bracket's absolute net token1 change, so volume that nets out
+        inside the bracket (a round trip) does not enlarge the deduction;
+      - "gross" (the S1 hook): g = sum of |d1|; g is uint128 (saturates beyond).
+    With token0 as the numeraire, S_hat - S = (P_hat - P) * d1 exactly, so the deduction on the net change bounds the
+    bracket's surplus error when |P_hat - P| <= eps. `eps_wad` is read when a scope opens and locked with kappa; it
+    can be changed between swaps like `kappa_const`.
     """
 
     ACCUMULATIONS = ("net", "tx_clip", "swap_clip")
     BUFFERS = ("none", "abs", "rel")
+    VOLUMES = ("net", "gross")
 
     def __init__(self, k_const: int, delta: int, lam_bps: int, gamma_bps: int, gas_units: int = 0,
                  tau_wei: int = 0, gas_price_token0_wad: int = 0, scope: str = "block", accumulation: str = "net",
-                 buffer: str = "none", eps_wad: int = 0):
+                 buffer: str = "none", eps_wad: int = 0, volume: str = "net"):
         if not 0 <= lam_bps <= 10_000 or not 0 <= gamma_bps < 10_000 or scope not in ("block", "tx"):
             raise ValueError("bad ScopedHookReference parameters")
         if accumulation not in self.ACCUMULATIONS or (accumulation == "tx_clip" and scope != "block"):
             raise ValueError("bad ScopedHookReference accumulation")
         self.accumulation = accumulation
-        if buffer not in self.BUFFERS or eps_wad < 0:
+        if buffer not in self.BUFFERS or eps_wad < 0 or volume not in self.VOLUMES:
             raise ValueError("bad ScopedHookReference buffer")
-        self.buffer, self.eps_wad = buffer, eps_wad
+        self.buffer, self.eps_wad, self.volume = buffer, eps_wad, volume
         self.kappa_const = min(k_const + delta, U128_MAX)
         self.gas_units, self.tau_wei, self.gas_price = gas_units, tau_wei, gas_price_token0_wad
         self.lam_bps, self.gamma_bps, self.scope = lam_bps, gamma_bps, scope
@@ -172,7 +178,7 @@ class ScopedHookReference:
             s["cum0"], s["cum1"] = c0, c1
         if self.accumulation == "swap_clip":
             s["C"] += self._bracket(s, d0, d1, abs(d1))
-        if s["C"] > U128_MAX or s["g"] > U128_MAX:
+        if s["C"] > U128_MAX or (self.volume == "gross" and s["g"] > U128_MAX):
             s["saturated"] = True
             return 0
         a = self.surplus(pool)
@@ -206,9 +212,12 @@ class ScopedHookReference:
         return s["C"] + self._bracket(s, s["cum0"], s["cum1"], s["g"])
 
     def _bracket(self, s: dict, c0: int, c1: int, g: int) -> int:
-        """[c0 + c1 * ref / WAD - buffer(g)]^+ at the scope's locked reference and eps."""
+        """[c0 + c1 * ref / WAD - buffer(v)]^+ at the scope's locked reference and eps; v = |c1| (volume "net") or
+        the gross volume g (volume "gross")."""
         if self.buffer == "none" or s["eps"] == 0:
             return hook_surplus(c0, c1, s["ref"])
+        if self.volume == "net":
+            g = abs(c1)
         if self.buffer == "abs":
             ded = -(-s["eps"] * g // WAD)
         else:
